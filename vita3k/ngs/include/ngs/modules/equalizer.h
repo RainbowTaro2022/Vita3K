@@ -1,4 +1,4 @@
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -44,11 +44,7 @@ public:
     uint32_t module_id() const override { return 0x5CEC; }
 
     static constexpr uint32_t get_max_parameter_size() {
-        constexpr uint32_t max_size = std::max(sizeof(SceNgsParamEqParams), sizeof(SceNgsParamEqParamsCoEff));
-        // World of Final Fantasy acts as if the parameter buffer is followed by another parameter buffer
-        // Probably assuming something about the layout in ngs memory or how lock/unlock params works
-        // right now, just multiply by 2 this buffer size
-        return 2 * max_size;
+        return std::max(sizeof(SceNgsParamEqParams), sizeof(SceNgsParamEqParamsCoEff));
     }
     uint32_t get_buffer_parameter_size() const override {
         return get_max_parameter_size();

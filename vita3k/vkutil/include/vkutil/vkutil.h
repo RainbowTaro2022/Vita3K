@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,6 +17,9 @@
 
 #pragma once
 
+#ifdef __APPLE__
+#define VK_ENABLE_BETA_EXTENSIONS
+#endif
 #define VK_NO_PROTOTYPES
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_SPACESHIP_OPERATOR
@@ -24,9 +27,19 @@
 #include <vulkan/vulkan.hpp>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnullability-completeness"
+#endif
+
 #include <vk_mem_alloc.hpp>
 
-#include <string>
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#include <util/fs.h>
 
 namespace vkutil {
 
@@ -87,28 +100,10 @@ static constexpr vma::AllocationCreateInfo vma_host_visible = {
     .requiredFlags = vk::MemoryPropertyFlagBits::eHostVisible,
 };
 
-template <typename T>
-static std::enable_if_t<vk::isVulkanHandleType<T>::value, uint64_t> &to_u64(T &vk_object) {
-    return reinterpret_cast<uint64_t &>(vk_object);
-}
-
-static uint64_t &to_u64(vma::Allocation &vk_object) {
-    return reinterpret_cast<uint64_t &>(vk_object);
-}
-
-template <typename T>
-static std::enable_if_t<vk::isVulkanHandleType<T>::value, T> &from_u64(uint64_t &vk_object) {
-    return reinterpret_cast<T &>(vk_object);
-}
-
-static vma::Allocation &from_u64(uint64_t &vk_object) {
-    return reinterpret_cast<vma::Allocation &>(vk_object);
-}
-
 vk::CommandBuffer create_single_time_command(vk::Device device, vk::CommandPool cmd_pool);
 void end_single_time_command(vk::Device device, vk::Queue queue, vk::CommandPool cmd_pool, vk::CommandBuffer cmd_buffer);
 
-vk::ShaderModule load_shader(vk::Device device, const std::string &path);
+vk::ShaderModule load_shader(vk::Device device, const fs::path &shader_path);
 vk::ShaderModule load_shader(vk::Device device, const void *data, const uint32_t size);
 
 void copy_buffer(vk::Device device, vk::CommandPool cmd_pool, vk::Queue queue, vk::Buffer src, vk::Buffer dst, vk::DeviceSize size);
@@ -122,11 +117,13 @@ enum struct ImageLayout {
     ColorAttachmentReadWrite,
     SampledImage,
     StorageImage,
-    DepthReadOnly
+    DepthStencilReadOnly
 };
 void transition_image_layout(vk::CommandBuffer cmd_buffer, vk::Image image, ImageLayout src_layout, ImageLayout dst_layout, const vk::ImageSubresourceRange &range = color_subresource_range);
 // transition image layout assuming you don't care about the former image content
 void transition_image_layout_discard(vk::CommandBuffer cmd_buffer, vk::Image image, ImageLayout src_layout, ImageLayout dst_layout, const vk::ImageSubresourceRange &range = color_subresource_range);
+// Return the vulkan layout associated with ImageLayout
+vk::ImageLayout get_underlying_layout(ImageLayout layout);
 
 // given the swizzle of the color surface (which was written as rgba because vulkan doesn't support swizzle on framebuffers)
 // and the swizzle of the texture that's reading from the color surface

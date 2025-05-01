@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ struct NpTrophyUnlockCallbackData {
     std::string trophy_id;
     std::string trophy_name;
     std::string trophy_detail;
-    np::trophy::SceNpTrophyGrade trophy_kind;
+    np::trophy::SceNpTrophyGrade trophy_kind{};
     std::vector<std::uint8_t> icon_buf;
 };
 
@@ -52,18 +52,17 @@ struct NpTrophyState {
     NpTrophyUnlockCallback trophy_unlock_callback;
 };
 
-enum SceNpServiceState {
-    SCE_NP_SERVICE_STATE_UNKNOWN,
-    SCE_NP_SERVICE_STATE_SIGNED_OUT,
-    SCE_NP_SERVICE_STATE_SIGNED_IN,
-    SCE_NP_SERVICE_STATE_ONLINE
+enum SceNpServiceState : uint32_t {
+    SCE_NP_SERVICE_STATE_UNKNOWN = 0,
+    SCE_NP_SERVICE_STATE_SIGNED_OUT = 1,
+    SCE_NP_SERVICE_STATE_SIGNED_IN = 2,
+    SCE_NP_SERVICE_STATE_ONLINE = 3
 };
 
 struct NpState {
     bool inited = false;
     np_callbacks cbs;
-    int state_cb_id;
-    int state = -1;
+    SceUID state_cb_id;
 
     NpTrophyState trophy_state;
     np::CommunicationID comm_id;

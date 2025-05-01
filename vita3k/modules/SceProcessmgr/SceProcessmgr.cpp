@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -301,36 +301,3 @@ EXPORT(int, sceKernelGetMainModuleSdkVersion) {
         return 0;
     }
 }
-
-BRIDGE_IMPL(_sceKernelExitProcessForUser)
-BRIDGE_IMPL(_sceKernelGetTimer5Reg)
-BRIDGE_IMPL(_sceKernelRegisterLibkernelAddresses)
-BRIDGE_IMPL(sceKernelCDialogSessionClose)
-BRIDGE_IMPL(sceKernelCDialogSetLeaseLimit)
-BRIDGE_IMPL(sceKernelCallAbortHandler)
-BRIDGE_IMPL(sceKernelGetCurrentProcess)
-BRIDGE_IMPL(sceKernelGetExtraTty)
-BRIDGE_IMPL(sceKernelGetMainModuleSdkVersion)
-BRIDGE_IMPL(sceKernelGetProcessName)
-BRIDGE_IMPL(sceKernelGetProcessParam)
-BRIDGE_IMPL(sceKernelGetProcessTimeCore)
-BRIDGE_IMPL(sceKernelGetProcessTimeLowCore)
-BRIDGE_IMPL(sceKernelGetProcessTimeWideCore)
-BRIDGE_IMPL(sceKernelGetProcessTitleId)
-BRIDGE_IMPL(sceKernelGetRemoteProcessTime)
-BRIDGE_IMPL(sceKernelGetStderr)
-BRIDGE_IMPL(sceKernelGetStdin)
-BRIDGE_IMPL(sceKernelGetStdout)
-BRIDGE_IMPL(sceKernelIsCDialogAvailable)
-BRIDGE_IMPL(sceKernelIsGameBudget)
-BRIDGE_IMPL(sceKernelLibcClock)
-BRIDGE_IMPL(sceKernelLibcGettimeofday)
-BRIDGE_IMPL(sceKernelLibcGmtime_r)
-BRIDGE_IMPL(sceKernelLibcLocaltime_r)
-BRIDGE_IMPL(sceKernelLibcMktime)
-BRIDGE_IMPL(sceKernelLibcTime)
-BRIDGE_IMPL(sceKernelPowerLock)
-BRIDGE_IMPL(sceKernelPowerTick)
-BRIDGE_IMPL(sceKernelPowerUnlock)
-BRIDGE_IMPL(sceKernelRegisterProcessTerminationCallback)
-BRIDGE_IMPL(sceKernelUnregisterProcessTerminationCallback)

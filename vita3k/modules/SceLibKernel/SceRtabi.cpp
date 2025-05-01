@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceRtabi.h"
+#include <module/module.h>
 #include <util/tracy.h>
 
 TRACY_MODULE_NAME(SceRtabi);
@@ -135,20 +135,3 @@ EXPORT(uint32_t, __rtabi_uidiv, uint32_t numerator, uint32_t denominator) {
     }
     return numerator / denominator;
 }
-
-BRIDGE_IMPL(__rtabi_lcmp)
-BRIDGE_IMPL(__rtabi_lmul)
-BRIDGE_IMPL(__rtabi_lasr)
-BRIDGE_IMPL(__rtabi_ulcmp)
-BRIDGE_IMPL(__rtabi_idiv)
-BRIDGE_IMPL(__rtabi_d2lz)
-BRIDGE_IMPL(__rtabi_f2ulz)
-BRIDGE_IMPL(__rtabi_idivmod)
-BRIDGE_IMPL(__rtabi_d2ulz)
-BRIDGE_IMPL(__rtabi_ldivmod)
-BRIDGE_IMPL(__rtabi_llsl)
-BRIDGE_IMPL(__rtabi_f2lz)
-BRIDGE_IMPL(__rtabi_uidivmod)
-BRIDGE_IMPL(__rtabi_llsr)
-BRIDGE_IMPL(__rtabi_uldivmod)
-BRIDGE_IMPL(__rtabi_uidiv)

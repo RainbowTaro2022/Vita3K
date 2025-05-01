@@ -64,15 +64,12 @@
 #include <gui/imgui_impl_sdl_vulkan.h>
 
 #include <renderer/types.h>
-#include <renderer/vulkan/functions.h>
 #include <renderer/vulkan/state.h>
 #include <vkutil/vkutil.h>
 
 #include <util/log.h>
 
 #include <SDL_vulkan.h>
-
-#include <fstream>
 
 // Visual Studio warnings
 #ifdef _MSC_VER
@@ -188,7 +185,7 @@ static uint32_t __glsl_shader_frag_spv[] = {
 // FUNCTIONS
 //-----------------------------------------------------------------------------
 
-inline renderer::vulkan::VKState &get_renderer(ImGui_VulkanState &state) {
+inline static renderer::vulkan::VKState &get_renderer(ImGui_VulkanState &state) {
     return dynamic_cast<renderer::vulkan::VKState &>(*state.renderer);
 }
 
@@ -279,7 +276,7 @@ static void ImGui_ImplVulkan_SetupRenderState(ImGui_VulkanState &state, ImDrawDa
 
 // constexpr vk::IndexType imgui_index_type = sizeof(ImDrawIdx) == 2 ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
 
-IMGUI_API ImGui_VulkanState *ImGui_ImplSdlVulkan_Init(renderer::State *renderer, SDL_Window *window, const std::string &base_path) {
+IMGUI_API ImGui_VulkanState *ImGui_ImplSdlVulkan_Init(renderer::State *renderer, SDL_Window *window) {
     auto *state = new ImGui_VulkanState;
     state->renderer = renderer;
     state->window = window;
@@ -482,8 +479,8 @@ IMGUI_API void ImGui_ImplSdlVulkan_RenderDrawData(ImGui_VulkanState &state) {
             CreateOrResizeBuffer(state, rb->IndexBuffer, rb->IndexBufferAllocation, rb->IndexBufferSize, index_size, vk::BufferUsageFlagBits::eIndexBuffer);
 
         // Upload vertex/index data into a single contiguous GPU buffer
-        ImDrawVert *vtx_dst = reinterpret_cast<ImDrawVert *>(vk_state.allocator.mapMemory(rb->VertexBufferAllocation));
-        ImDrawIdx *idx_dst = reinterpret_cast<ImDrawIdx *>(vk_state.allocator.mapMemory(rb->IndexBufferAllocation));
+        ImDrawVert *vtx_dst = static_cast<ImDrawVert *>(vk_state.allocator.mapMemory(rb->VertexBufferAllocation));
+        ImDrawIdx *idx_dst = static_cast<ImDrawIdx *>(vk_state.allocator.mapMemory(rb->IndexBufferAllocation));
 
         for (int n = 0; n < draw_data->CmdListsCount; n++) {
             const ImDrawList *cmd_list = draw_data->CmdLists[n];
@@ -553,7 +550,7 @@ IMGUI_API void ImGui_ImplSdlVulkan_RenderDrawData(ImGui_VulkanState &state) {
                 // Bind DescriptorSet with font or user texture
                 TextureState *texture;
                 if (pcmd->TextureId)
-                    texture = reinterpret_cast<TextureState *>(pcmd->TextureId);
+                    texture = static_cast<TextureState *>(pcmd->TextureId);
                 else
                     texture = state.Font;
 
@@ -703,7 +700,7 @@ IMGUI_API ImTextureID ImGui_ImplSdlVulkan_CreateTexture(ImGui_VulkanState &state
 }
 
 IMGUI_API void ImGui_ImplSdlVulkan_DeleteTexture(ImGui_VulkanState &state, ImTextureID texture) {
-    auto texture_ptr = reinterpret_cast<TextureState *>(texture);
+    auto texture_ptr = static_cast<TextureState *>(texture);
     auto &vk_state = get_renderer(state);
 
     vk_state.device.waitIdle();
@@ -801,7 +798,7 @@ IMGUI_API bool ImGui_ImplSdlVulkan_CreateDeviceObjects(ImGui_VulkanState &state)
         io.Fonts->GetTexDataAsAlpha8(&pixels, &width, &height);
 
         io.Fonts->TexID = ImGui_ImplSdlVulkan_CreateTexture(state, pixels, width, height, true);
-        state.Font = reinterpret_cast<TextureState *>(io.Fonts->TexID);
+        state.Font = static_cast<TextureState *>(io.Fonts->TexID);
 
         // reserve and remove the last descriptor set for the font
         state.Font->descriptor_set = state.DescriptorSets[TextureState::nb_descriptor_sets];

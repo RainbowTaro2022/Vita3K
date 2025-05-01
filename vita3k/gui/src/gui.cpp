@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -21,22 +21,22 @@
 
 #include <gui/imgui_impl_sdl.h>
 #include <gui/state.h>
+#include <renderer/state.h>
 
 #include <boost/algorithm/string/trim.hpp>
 #include <config/state.h>
+#include <dialog/state.h>
 #include <display/state.h>
-#include <glutil/gl.h>
 #include <io/VitaIoDevice.h>
 #include <io/state.h>
 #include <io/vfs.h>
 #include <lang/functions.h>
 #include <packages/sfo.h>
 #include <regmgr/functions.h>
+#include <touch/functions.h>
 #include <util/fs.h>
 #include <util/log.h>
 #include <util/string_utils.h>
-
-#include <SDL_video.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -49,24 +49,22 @@ namespace gui {
 
 void draw_info_message(GuiState &gui, EmuEnvState &emuenv) {
     if (emuenv.io.title_id.empty() && emuenv.cfg.display_info_message) {
-        const ImVec2 display_size(emuenv.viewport_size.x, emuenv.viewport_size.y);
-        const ImVec2 RES_SCALE(display_size.x / emuenv.res_width_dpi_scale, display_size.y / emuenv.res_height_dpi_scale);
-        const ImVec2 SCALE(RES_SCALE.x * emuenv.dpi_scale, RES_SCALE.y * emuenv.dpi_scale);
+        const ImVec2 display_size(emuenv.logical_viewport_size.x, emuenv.logical_viewport_size.y);
+        const ImVec2 RES_SCALE(emuenv.gui_scale.x, emuenv.gui_scale.y);
+        const ImVec2 SCALE(RES_SCALE.x * emuenv.manual_dpi_scale, RES_SCALE.y * emuenv.manual_dpi_scale);
 
         const ImVec2 WINDOW_SIZE(680.0f * SCALE.x, 320.0f * SCALE.y);
         const ImVec2 BUTTON_SIZE(160.f * SCALE.x, 46.f * SCALE.y);
 
-        ImGui::SetNextWindowPos(ImVec2(emuenv.viewport_pos.x, emuenv.viewport_pos.y), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(emuenv.logical_viewport_pos.x, emuenv.logical_viewport_pos.y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(display_size, ImGuiCond_Always);
         ImGui::Begin("##information", nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
-        ImGui::SetNextWindowPos(ImVec2(emuenv.viewport_pos.x + (display_size.x / 2) - (WINDOW_SIZE.x / 2.f), emuenv.viewport_pos.y + (display_size.y / 2.f) - (WINDOW_SIZE.y / 2.f)), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(emuenv.logical_viewport_pos.x + (display_size.x / 2) - (WINDOW_SIZE.x / 2.f), emuenv.logical_viewport_pos.y + (display_size.y / 2.f) - (WINDOW_SIZE.y / 2.f)), ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.f * SCALE.x);
-        ImGui::BeginChild("##info", WINDOW_SIZE, true, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
-        auto title = fmt::format("{}", spdlog::level::to_string_view(gui.info_message.level));
-        title[0] = std::toupper(title[0]);
+        ImGui::BeginChild("##info", WINDOW_SIZE, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
+        const auto &title = gui.info_message.title;
         ImGui::SetWindowFontScale(RES_SCALE.x);
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(title.c_str()).x) / 2);
-        ImGui::TextColored(GUI_COLOR_TEXT_TITLE, "%s", title.c_str());
+        TextColoredCentered(GUI_COLOR_TEXT_TITLE, title.c_str());
         ImGui::Spacing();
         ImGui::Separator();
         const auto text_size = ImGui::CalcTextSize(gui.info_message.msg.c_str(), 0, false, WINDOW_SIZE.x - (24.f * SCALE.x));
@@ -76,7 +74,7 @@ void draw_info_message(GuiState &gui, EmuEnvState &emuenv) {
         ImGui::SetCursorPosY(WINDOW_SIZE.y - BUTTON_SIZE.y - (42.0f * SCALE.y));
         ImGui::Separator();
         ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() / 2.f) - (BUTTON_SIZE.x / 2.f), WINDOW_SIZE.y - BUTTON_SIZE.y - (24.0f * SCALE.y)));
-        if (ImGui::Button(emuenv.common_dialog.lang.common["ok"].c_str(), BUTTON_SIZE) || ImGui::IsKeyPressed(emuenv.cfg.keyboard_button_cross))
+        if (ImGui::Button(emuenv.common_dialog.lang.common["ok"].c_str(), BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_cross)))
             gui.info_message = {};
         ImGui::EndChild();
 
@@ -105,7 +103,7 @@ static void init_style(EmuEnvState &emuenv) {
     style->GrabMinSize = 4.0f;
     style->GrabRounding = 2.5f;
 
-    style->ScaleAllSizes(emuenv.dpi_scale);
+    style->ScaleAllSizes(emuenv.manual_dpi_scale);
 
     style->Colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
     style->Colors[ImGuiCol_TextDisabled] = ImVec4(0.24f, 0.23f, 0.29f, 1.00f);
@@ -142,7 +140,7 @@ static void init_style(EmuEnvState &emuenv) {
     style->Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
     style->Colors[ImGuiCol_Tab] = ImVec4(0.80f, 0.80f, 0.83f, 0.31f);
     style->Colors[ImGuiCol_TabHovered] = ImVec4(0.32f, 0.30f, 0.23f, 1.00f);
-    style->Colors[ImGuiCol_TabActive] = ImVec4(0.06f, 0.05f, 0.07f, 1.00f);
+    style->Colors[ImGuiCol_TabSelected] = ImVec4(0.06f, 0.05f, 0.07f, 1.00f);
     style->Colors[ImGuiCol_PlotLines] = ImVec4(1.f, 0.49f, 0.f, 1.f);
     style->Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.25f, 1.00f, 0.00f, 1.00f);
     style->Colors[ImGuiCol_PlotHistogram] = ImVec4(0.40f, 0.39f, 0.38f, 0.63f);
@@ -154,25 +152,11 @@ static void init_style(EmuEnvState &emuenv) {
 static void init_font(GuiState &gui, EmuEnvState &emuenv) {
     ImGuiIO &io = ImGui::GetIO();
 
-    ImFontConfig mono_font_config{};
-    mono_font_config.SizePixels = 13.f;
-
-#ifdef _WIN32
-    const auto monospaced_font_path = "C:\\Windows\\Fonts\\consola.ttf";
-    gui.monospaced_font = io.Fonts->AddFontFromFileTTF(monospaced_font_path, mono_font_config.SizePixels, &mono_font_config, io.Fonts->GetGlyphRangesJapanese());
-#else
-    gui.monospaced_font = io.Fonts->AddFontDefault(&mono_font_config);
-#endif
-
     // Set Large Font
-    static const ImWchar large_font_chars[] = { L'0', L'1', L'2', L'3', L'4', L'5', L'6', L'7', L'8', L'9', L':', L'A', L'M', L'P', 0 };
-
-    // Set Fw font paths
-    const auto fw_font_path{ fs::path(emuenv.pref_path) / "sa0/data/font/pvf" };
-    const auto latin_fw_font_path{ fw_font_path / "ltn0.pvf" };
+    constexpr ImWchar large_font_chars[] = { L'0', L'1', L'2', L'3', L'4', L'5', L'6', L'7', L'8', L'9', L':', L'A', L'M', L'P', 0 };
 
     // clang-format off
-    static const ImWchar latin_range[] = {
+    constexpr ImWchar latin_range[] = {
         0x0020, 0x017F, // Basic Latin + Latin Supplement
         0x0370, 0x03FF, // Greek and Coptic
         0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
@@ -183,7 +167,7 @@ static void init_font(GuiState &gui, EmuEnvState &emuenv) {
         0,
     };
 
-    static const ImWchar extra_range[] = {
+    constexpr ImWchar extra_range[] = {
         0x0100, 0x017F, // Latin Extended A
         0x2000, 0x206F, // General Punctuation
         0x2150, 0x218F, // Numeral forms
@@ -191,19 +175,19 @@ static void init_font(GuiState &gui, EmuEnvState &emuenv) {
         0x2200, 0x22FF, // Math operators
         0x2460, 0x24FF, // Enclosed Alphanumerics
         0x25A0, 0x26FF, // Miscellaneous symbols
-        0x4E00, 0x9FFF, // Unified ideograms CJC
+        0x4E00, 0x9FFF, // Unified ideograms CJK
         0,
     };
 
-    static const ImWchar korean_range[] = {
+    constexpr ImWchar korean_range[] = {
         0x3131, 0x3163, // Korean alphabets
         0xAC00, 0xD79D, // Korean characters
         0,
     };
 
-    static const ImWchar chinese_range[] = {
+    constexpr ImWchar chinese_range[] = {
         0x2000, 0x206F, // General Punctuation
-        0x4e00, 0x9FAF, // CJK Ideograms
+        0x4E00, 0x9FAF, // CJK Ideograms
         0,
     };
     // clang-format on
@@ -212,75 +196,127 @@ static void init_font(GuiState &gui, EmuEnvState &emuenv) {
     ImFontGlyphRangesBuilder builder;
     builder.AddRanges(io.Fonts->GetGlyphRangesJapanese());
     builder.AddRanges(extra_range);
-    ImVector<ImWchar> japanes_and_extra_ranges;
-    builder.BuildRanges(&japanes_and_extra_ranges);
+    ImVector<ImWchar> japanese_and_extra_ranges;
+    builder.BuildRanges(&japanese_and_extra_ranges);
 
-    ImFontConfig font_config{};
-    ImFontConfig large_font_config{};
+    // Set max texture size
+    int max_texture_size = emuenv.renderer->get_max_2d_texture_width();
+    io.Fonts->TexDesiredWidth = max_texture_size;
 
-    // Check existence of fw font file
-    if (fs::exists(latin_fw_font_path)) {
-        // Add fw font to imgui
+    for (int font_scale_count = std::size(FontScaleCandidates); font_scale_count > 0; font_scale_count--) {
+        for (int i = 0; i < font_scale_count; i++) {
+            float scale = FontScaleCandidates[i];
 
-        gui.fw_font = true;
-        font_config.SizePixels = 19.2f;
+            ImFontConfig mono_font_config{};
+            mono_font_config.SizePixels = 13.f;
+            mono_font_config.OversampleH = 2;
+            mono_font_config.OversampleV = 2;
+            mono_font_config.RasterizerDensity = scale;
 
-        gui.vita_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), font_config.SizePixels, &font_config, latin_range);
-        font_config.MergeMode = true;
+#ifdef _WIN32
+            constexpr auto monospaced_font_path = "C:\\Windows\\Fonts\\consola.ttf";
+            gui.monospaced_font[i] = io.Fonts->AddFontFromFileTTF(monospaced_font_path, mono_font_config.SizePixels, &mono_font_config, io.Fonts->GetGlyphRangesJapanese());
+#else
+            gui.monospaced_font[i] = io.Fonts->AddFontDefault(&mono_font_config);
+#endif
 
-        io.Fonts->AddFontFromFileTTF((fw_font_path / "jpn0.pvf").string().c_str(), font_config.SizePixels, &font_config, japanes_and_extra_ranges.Data);
+            // Set Fw font paths
+            const auto fw_font_path{ emuenv.pref_path / "sa0/data/font/pvf" };
+            const auto latin_fw_font_path{ fw_font_path / "ltn0.pvf" };
 
-        const auto sys_lang = static_cast<SceSystemParamLang>(emuenv.cfg.sys_lang);
-        if (emuenv.cfg.asia_font_support || (sys_lang == SCE_SYSTEM_PARAM_LANG_KOREAN))
-            io.Fonts->AddFontFromFileTTF((fw_font_path / "kr0.pvf").string().c_str(), font_config.SizePixels, &font_config, korean_range);
-        if (emuenv.cfg.asia_font_support || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_T) || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_S))
-            io.Fonts->AddFontFromFileTTF((fw_font_path / "cn0.pvf").string().c_str(), font_config.SizePixels, &font_config, chinese_range);
-        font_config.MergeMode = false;
+            ImFontConfig font_config{};
+            ImFontConfig large_font_config{};
 
-        large_font_config.SizePixels = 116.f;
-        gui.large_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), large_font_config.SizePixels, &large_font_config, large_font_chars);
-    } else {
-        LOG_WARN("Could not find firmware font file at \"{}\", install firmware fonts package to fix this.", latin_fw_font_path.string());
-        font_config.SizePixels = 22.f;
+            // Check existence of fw font file
+            if (fs::exists(latin_fw_font_path)) {
+                // Add fw font to imgui
 
-        // Set up default font path
-        const auto default_font_path{ fs::path(emuenv.base_path) / "data/fonts/mplus-1mn-bold.ttf" };
-        // Check existence of default font file
-        if (fs::exists(default_font_path)) {
-            gui.vita_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), font_config.SizePixels, &font_config, latin_range);
-            font_config.MergeMode = true;
-            io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), font_config.SizePixels, &font_config, japanes_and_extra_ranges.Data);
-            font_config.MergeMode = false;
+                gui.fw_font = true;
+                font_config.SizePixels = 19.2f;
+                font_config.OversampleH = 2;
+                font_config.OversampleV = 2;
+                font_config.RasterizerDensity = scale;
 
-            large_font_config.SizePixels = 134.f;
-            gui.large_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), large_font_config.SizePixels, &large_font_config, large_font_chars);
+                gui.vita_font[i] = io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(latin_fw_font_path).c_str(), font_config.SizePixels, &font_config, latin_range);
+                font_config.MergeMode = true;
 
-            LOG_INFO("Using default Vita3K font.");
-        } else
-            LOG_WARN("Could not find default Vita3K font, using default ImGui font.", default_font_path.string());
+                const auto sys_lang = static_cast<SceSystemParamLang>(emuenv.cfg.sys_lang);
+                const bool is_chinese = (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_S) || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_T);
+
+                // When the system language is Chinese, the Chinese fonts should be loaded before the Japanese fonts
+                // So that the CJK characters can be displayed in Chinese glyphs
+                if (is_chinese)
+                    io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(fw_font_path / "cn0.pvf").c_str(), font_config.SizePixels, &font_config, chinese_range);
+
+                io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(fw_font_path / "jpn0.pvf").c_str(), font_config.SizePixels, &font_config, japanese_and_extra_ranges.Data);
+
+                if (emuenv.cfg.asia_font_support || (sys_lang == SCE_SYSTEM_PARAM_LANG_KOREAN))
+                    io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(fw_font_path / "kr0.pvf").c_str(), font_config.SizePixels, &font_config, korean_range);
+                if (emuenv.cfg.asia_font_support && !is_chinese)
+                    io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(fw_font_path / "cn0.pvf").c_str(), font_config.SizePixels, &font_config, chinese_range);
+                font_config.MergeMode = false;
+
+                large_font_config.SizePixels = 116.f;
+                large_font_config.OversampleH = 2;
+                large_font_config.OversampleV = 2;
+                large_font_config.RasterizerDensity = scale;
+                gui.large_font[i] = io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(latin_fw_font_path).c_str(), large_font_config.SizePixels, &large_font_config, large_font_chars);
+            } else {
+                LOG_WARN("Could not find firmware font file at {}, install firmware fonts package to fix this.", latin_fw_font_path);
+                font_config.SizePixels = 22.f;
+                font_config.OversampleH = 2;
+                font_config.OversampleV = 2;
+                font_config.RasterizerDensity = scale;
+
+                // Set up default font path
+                fs::path default_font_path = emuenv.static_assets_path / "data/fonts";
+
+                // Check existence of default font file
+                if (fs::exists(default_font_path)) {
+                    gui.vita_font[i] = io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(default_font_path / "mplus-1mn-bold.ttf").c_str(), font_config.SizePixels, &font_config, latin_range);
+                    font_config.MergeMode = true;
+                    io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(default_font_path / "mplus-1mn-bold.ttf").c_str(), font_config.SizePixels, &font_config, japanese_and_extra_ranges.Data);
+
+                    const auto sys_lang = static_cast<SceSystemParamLang>(emuenv.cfg.sys_lang);
+                    if (!emuenv.cfg.initial_setup || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_S) || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_T))
+                        io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(default_font_path / "SourceHanSansSC-Bold-Min.ttf").c_str(), font_config.SizePixels, &font_config, japanese_and_extra_ranges.Data);
+                    font_config.MergeMode = false;
+
+                    large_font_config.SizePixels = 134.f;
+                    large_font_config.OversampleH = 2;
+                    large_font_config.OversampleV = 2;
+                    large_font_config.RasterizerDensity = scale;
+                    gui.large_font[i] = io.Fonts->AddFontFromFileTTF(fs_utils::path_to_utf8(default_font_path / "mplus-1mn-bold.ttf").c_str(), large_font_config.SizePixels, &large_font_config, large_font_chars);
+
+                    LOG_INFO("Using default Vita3K font.");
+                } else
+                    LOG_WARN("Could not find default Vita3K font at {}, using default ImGui font.", default_font_path);
+            }
+        }
+
+        // Build font atlas loaded and upload to GPU
+        io.Fonts->Build();
+        LOG_INFO("Maximum font scale set to x{}, Font atlas size: {}x{}", FontScaleCandidates[font_scale_count - 1], io.Fonts->TexWidth, io.Fonts->TexHeight);
+        if (io.Fonts->TexWidth > max_texture_size || io.Fonts->TexHeight > max_texture_size) {
+            LOG_WARN("Font atlas size exceeds maximum texture size, retrying with smaller font size.\n");
+            io.Fonts->Clear();
+        } else {
+            emuenv.max_font_level = font_scale_count - 1;
+            return;
+        }
     }
-
-    // Build font atlas loaded and upload to GPU
-    io.Fonts->Build();
-
-    // DPI scaling
-    io.FontGlobalScale = emuenv.dpi_scale;
-    io.DisplayFramebufferScale = { emuenv.dpi_scale, emuenv.dpi_scale };
 }
 
 vfs::FileBuffer init_default_icon(GuiState &gui, EmuEnvState &emuenv) {
     vfs::FileBuffer buffer;
 
-    const auto default_fw_icon{ fs::path(emuenv.pref_path) / "vs0/data/internal/livearea/default/sce_sys/icon0.png" };
-    const auto default_icon{ fs::path(emuenv.base_path) / "data/image/icon.png" };
+    const auto default_fw_icon{ emuenv.pref_path / "vs0/data/internal/livearea/default/sce_sys/icon0.png" };
+
+    fs::path default_icon = emuenv.static_assets_path / "data/image/icon.png";
 
     if (fs::exists(default_fw_icon) || fs::exists(default_icon)) {
-        auto icon_path = fs::exists(default_fw_icon) ? default_fw_icon.string() : default_icon.string();
-        std::ifstream image_stream(icon_path, std::ios::binary | std::ios::ate);
-        const std::size_t fsize = image_stream.tellg();
-        buffer.resize(fsize);
-        image_stream.seekg(0, std::ios::beg);
-        image_stream.read(reinterpret_cast<char *>(buffer.data()), fsize);
+        fs::path icon_path = fs::exists(default_fw_icon) ? default_fw_icon : default_icon;
+        fs_utils::read_data(icon_path, buffer);
     }
 
     return buffer;
@@ -381,20 +417,22 @@ void init_app_background(GuiState &gui, EmuEnvState &emuenv, const std::string &
     int32_t height = 0;
     vfs::FileBuffer buffer;
 
-    const auto is_sys = app_path.find("NPXS") != std::string::npos;
+    const auto is_sys = app_path.starts_with("NPXS") && (app_path != "NPXS10007");
     if (is_sys)
         vfs::read_file(VitaIoDevice::vs0, buffer, emuenv.pref_path, "app/" + app_path + "/sce_sys/pic0.png");
     else
         vfs::read_app_file(buffer, emuenv.pref_path, app_path, "sce_sys/pic0.png");
 
+    const auto &title = APP_INDEX ? APP_INDEX->title : app_path;
+
     if (buffer.empty()) {
-        LOG_WARN("Background not found for application {} [{}].", APP_INDEX->title, app_path);
+        LOG_WARN("Background not found for application {} [{}].", title, app_path);
         return;
     }
 
     stbi_uc *data = stbi_load_from_memory(&buffer[0], static_cast<int>(buffer.size()), &width, &height, nullptr, STBI_rgb_alpha);
     if (!data) {
-        LOG_ERROR("Invalid background for application {} [{}].", APP_INDEX->title, app_path);
+        LOG_ERROR("Invalid background for application {} [{}].", title, app_path);
         return;
     }
     gui.apps_background[app_path].init(gui.imgui_state.get(), data, width, height);
@@ -410,7 +448,7 @@ std::string get_sys_lang_name(uint32_t lang_id) {
 }
 
 static bool get_user_apps(GuiState &gui, EmuEnvState &emuenv) {
-    const auto apps_cache_path{ fs::path(emuenv.pref_path) / "ux0/temp/apps.dat" };
+    const auto apps_cache_path{ emuenv.pref_path / "ux0/temp/apps.dat" };
     fs::ifstream apps_cache(apps_cache_path, std::ios::in | std::ios::binary);
     if (apps_cache.is_open()) {
         gui.app_selector.user_apps.clear();
@@ -429,7 +467,7 @@ static bool get_user_apps(GuiState &gui, EmuEnvState &emuenv) {
         // Read language of cache
         apps_cache.read((char *)&gui.app_selector.apps_cache_lang, sizeof(uint32_t));
         if (gui.app_selector.apps_cache_lang != emuenv.cfg.sys_lang) {
-            LOG_WARN("Current lang of cache: {}, is diferent config: {}, recreate it.", get_sys_lang_name(gui.app_selector.apps_cache_lang), get_sys_lang_name(emuenv.cfg.sys_lang));
+            LOG_WARN("Current lang of cache: {}, is different configuration: {}, recreate it.", get_sys_lang_name(gui.app_selector.apps_cache_lang), get_sys_lang_name(emuenv.cfg.sys_lang));
             return false;
         }
 
@@ -470,30 +508,29 @@ static bool get_user_apps(GuiState &gui, EmuEnvState &emuenv) {
 }
 
 void save_apps_cache(GuiState &gui, EmuEnvState &emuenv) {
-    const auto temp_path{ fs::path(emuenv.pref_path) / "ux0/temp" };
-    if (!fs::exists(temp_path))
-        fs::create_directory(temp_path);
+    const auto temp_path{ emuenv.pref_path / "ux0/temp" };
+    fs::create_directories(temp_path);
 
     fs::ofstream apps_cache(temp_path / "apps.dat", std::ios::out | std::ios::binary);
     if (apps_cache.is_open()) {
         // Write Size of apps list
         const auto size = gui.app_selector.user_apps.size();
-        apps_cache.write((char *)&size, sizeof(size));
+        apps_cache.write(reinterpret_cast<const char *>(&size), sizeof(size));
 
         // Write version of cache
         const uint32_t versionInFile = 1;
-        apps_cache.write((char *)&versionInFile, sizeof(uint32_t));
+        apps_cache.write(reinterpret_cast<const char *>(&versionInFile), sizeof(uint32_t));
 
         // Write language of cache
         gui.app_selector.apps_cache_lang = emuenv.cfg.sys_lang;
-        apps_cache.write((char *)&gui.app_selector.apps_cache_lang, sizeof(uint32_t));
+        apps_cache.write(reinterpret_cast<const char *>(&gui.app_selector.apps_cache_lang), sizeof(uint32_t));
 
         // Write Apps list
         for (const App &app : gui.app_selector.user_apps) {
             auto write = [&apps_cache](const std::string &i) {
-                const auto size = i.length();
+                const size_t size = i.length();
 
-                apps_cache.write((char *)&size, sizeof(size));
+                apps_cache.write(reinterpret_cast<const char *>(&size), sizeof(size));
                 apps_cache.write(i.c_str(), size);
             };
 
@@ -523,7 +560,7 @@ void init_home(GuiState &gui, EmuEnvState &emuenv) {
     regmgr::init_regmgr(emuenv.regmgr, emuenv.pref_path);
 
     const auto is_cmd = emuenv.cfg.run_app_path || emuenv.cfg.content_path;
-    if (!gui.users.empty() && (gui.users.find(emuenv.cfg.user_id) != gui.users.end()) && (is_cmd || emuenv.cfg.auto_user_login)) {
+    if (!gui.users.empty() && gui.users.contains(emuenv.cfg.user_id) && (is_cmd || emuenv.cfg.auto_user_login)) {
         init_user(gui, emuenv, emuenv.cfg.user_id);
         if (!is_cmd && emuenv.cfg.auto_user_login) {
             gui.vita_area.information_bar = true;
@@ -534,11 +571,13 @@ void init_home(GuiState &gui, EmuEnvState &emuenv) {
 }
 
 void init_user_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path) {
-    const auto APP_INDEX = get_app_index(gui, app_path);
-    if (APP_INDEX != gui.app_selector.user_apps.end()) {
-        gui.app_selector.user_apps.erase(APP_INDEX);
-        if (gui.app_selector.user_apps_icon.find(app_path) != gui.app_selector.user_apps_icon.end())
-            gui.app_selector.user_apps_icon.erase(app_path);
+    auto &user_apps = gui.app_selector.user_apps;
+    auto it = std::find_if(user_apps.begin(), user_apps.end(), [&](const App &a) {
+        return a.path == app_path;
+    });
+    if (it != user_apps.end()) {
+        user_apps.erase(it);
+        gui.app_selector.user_apps_icon.erase(app_path);
     }
 
     get_app_param(gui, emuenv, app_path);
@@ -552,7 +591,7 @@ void init_user_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_pa
 }
 
 std::map<std::string, ImGui_Texture>::const_iterator get_app_icon(GuiState &gui, const std::string &app_path) {
-    const auto &app_type = app_path.find("NPXS") != std::string::npos ? gui.app_selector.sys_apps_icon : gui.app_selector.user_apps_icon;
+    const auto &app_type = app_path.starts_with("NPXS") && (app_path != "NPXS10007") ? gui.app_selector.sys_apps_icon : gui.app_selector.user_apps_icon;
     const auto app_icon = std::find_if(app_type.begin(), app_type.end(), [&](const auto &i) {
         return i.first == app_path;
     });
@@ -560,13 +599,13 @@ std::map<std::string, ImGui_Texture>::const_iterator get_app_icon(GuiState &gui,
     return app_icon;
 }
 
-std::vector<App>::iterator get_app_index(GuiState &gui, const std::string &app_path) {
-    auto &app_type = app_path.find("NPXS") != std::string::npos ? gui.app_selector.sys_apps : gui.app_selector.user_apps;
+App *get_app_index(GuiState &gui, const std::string &app_path) {
+    auto &app_type = app_path.starts_with("NPXS") && (app_path != "NPXS10007") ? gui.app_selector.sys_apps : gui.app_selector.user_apps;
     const auto app_index = std::find_if(app_type.begin(), app_type.end(), [&](const App &a) {
         return a.path == app_path;
     });
 
-    return app_index;
+    return (app_index != app_type.end()) ? &(*app_index) : nullptr;
 }
 
 void get_app_param(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path) {
@@ -582,7 +621,7 @@ void get_app_param(GuiState &gui, EmuEnvState &emuenv, const std::string &app_pa
 }
 
 void get_user_apps_title(GuiState &gui, EmuEnvState &emuenv) {
-    const fs::path app_path{ fs::path{ emuenv.pref_path } / "ux0/app" };
+    const fs::path app_path{ emuenv.pref_path / "ux0/app" };
     if (!fs::exists(app_path))
         return;
 
@@ -590,8 +629,7 @@ void get_user_apps_title(GuiState &gui, EmuEnvState &emuenv) {
     for (const auto &app : fs::directory_iterator(app_path)) {
         if (!app.path().empty() && fs::is_directory(app.path())
             && !app.path().filename_is_dot() && !app.path().filename_is_dot_dot()) {
-            const auto app_path = app.path().stem().generic_string();
-            get_app_param(gui, emuenv, app_path);
+            get_app_param(gui, emuenv, app.path().stem().generic_string());
         }
     }
 
@@ -600,10 +638,10 @@ void get_user_apps_title(GuiState &gui, EmuEnvState &emuenv) {
 
 void get_sys_apps_title(GuiState &gui, EmuEnvState &emuenv) {
     gui.app_selector.sys_apps.clear();
-    const std::array<std::string, 4> sys_apps_list = { "NPXS10003", "NPXS10008", "NPXS10015", "NPXS10026" };
+    constexpr std::array<const std::string_view, 4> sys_apps_list = { "NPXS10003", "NPXS10008", "NPXS10015", "NPXS10026" };
     for (const auto &app : sys_apps_list) {
         vfs::FileBuffer params;
-        if (vfs::read_file(VitaIoDevice::vs0, params, emuenv.pref_path, "app/" + app + "/sce_sys/param.sfo")) {
+        if (vfs::read_file(VitaIoDevice::vs0, params, emuenv.pref_path, fmt::format("app/{}/sce_sys/param.sfo", app))) {
             SfoFile sfo_handle;
             sfo::load(sfo_handle, params);
             sfo::get_data_by_key(emuenv.app_info.app_version, sfo_handle, "APP_VER");
@@ -615,21 +653,22 @@ void get_sys_apps_title(GuiState &gui, EmuEnvState &emuenv) {
             boost::trim(emuenv.app_info.app_title);
             sfo::get_data_by_key(emuenv.app_info.app_title_id, sfo_handle, "TITLE_ID");
         } else {
+            auto &lang = gui.lang.sys_apps_title;
             emuenv.app_info.app_version = "1.00";
             emuenv.app_info.app_category = "gda";
             emuenv.app_info.app_title_id = app;
             if (app == "NPXS10003") {
-                emuenv.app_info.app_short_title = "Browser";
-                emuenv.app_info.app_title = "Internet Browser";
+                emuenv.app_info.app_short_title = lang["browser"];
+                emuenv.app_info.app_title = lang["internet_browser"];
             } else if (app == "NPXS10008") {
-                emuenv.app_info.app_short_title = "Trophies";
-                emuenv.app_info.app_title = "Trophy Collection";
+                emuenv.app_info.app_short_title = lang["trophies"];
+                emuenv.app_info.app_title = lang["trophy_collection"];
             } else if (app == "NPXS10015")
-                emuenv.app_info.app_short_title = emuenv.app_info.app_title = "Settings";
+                emuenv.app_info.app_short_title = emuenv.app_info.app_title = lang["settings"];
             else
-                emuenv.app_info.app_short_title = emuenv.app_info.app_title = "Content Manager";
+                emuenv.app_info.app_short_title = emuenv.app_info.app_title = lang["content_manager"];
         }
-        gui.app_selector.sys_apps.push_back({ emuenv.app_info.app_version, emuenv.app_info.app_category, {}, {}, {}, {}, emuenv.app_info.app_short_title, emuenv.app_info.app_title, emuenv.app_info.app_title_id, app });
+        gui.app_selector.sys_apps.push_back({ emuenv.app_info.app_version, emuenv.app_info.app_category, {}, {}, {}, {}, emuenv.app_info.app_short_title, emuenv.app_info.app_title, emuenv.app_info.app_title_id, std::string(app) });
     }
 
     std::sort(gui.app_selector.sys_apps.begin(), gui.app_selector.sys_apps.end(), [](const App &lhs, const App &rhs) {
@@ -640,9 +679,9 @@ void get_sys_apps_title(GuiState &gui, EmuEnvState &emuenv) {
 std::map<DateTime, std::string> get_date_time(GuiState &gui, EmuEnvState &emuenv, const tm &date_time) {
     std::map<DateTime, std::string> date_time_str;
     if (!emuenv.io.user_id.empty()) {
-        const auto day_str = gui.lang.common.wday[date_time.tm_wday];
-        const auto month_str = gui.lang.common.ymonth[date_time.tm_mon];
-        const auto days_str = gui.lang.common.mday[date_time.tm_mday];
+        const auto &day_str = gui.lang.common.wday[date_time.tm_wday];
+        const auto &month_str = gui.lang.common.ymonth[date_time.tm_mon];
+        const auto &days_str = gui.lang.common.mday[date_time.tm_mday];
         const auto year = date_time.tm_year + 1900;
         const auto month = date_time.tm_mon + 1;
         const auto day = date_time.tm_mday;
@@ -652,8 +691,8 @@ std::map<DateTime, std::string> get_date_time(GuiState &gui, EmuEnvState &emuenv
             date_time_str[DateTime::DATE_MINI] = fmt::format("{}/{}/{}", year, month, day);
             break;
         case SCE_SYSTEM_PARAM_DATE_FORMAT_DDMMYYYY: {
-            const auto small_month_str = gui.lang.common.small_ymonth[date_time.tm_mon];
-            const auto small_days_str = gui.lang.common.small_mday[day];
+            const auto &small_month_str = gui.lang.common.small_ymonth[date_time.tm_mon];
+            const auto &small_days_str = gui.lang.common.small_mday[day];
             date_time_str[DateTime::DATE_DETAIL] = fmt::format("{} {} ({})", small_days_str, small_month_str, day_str);
             date_time_str[DateTime::DATE_MINI] = fmt::format("{}/{}/{}", day, month, year);
             break;
@@ -664,23 +703,26 @@ std::map<DateTime, std::string> get_date_time(GuiState &gui, EmuEnvState &emuenv
             break;
         }
     }
-    const auto is_afternoon = date_time.tm_hour > 12;
-    const auto clock_12h = is_afternoon && (emuenv.io.user_id.empty() || (emuenv.cfg.sys_time_format == SCE_SYSTEM_PARAM_TIME_FORMAT_12HOUR));
-    date_time_str[DateTime::HOUR] = std::to_string(clock_12h ? (date_time.tm_hour - 12) : date_time.tm_hour);
+    const auto clock_12h = emuenv.io.user_id.empty() || (emuenv.cfg.sys_time_format == SCE_SYSTEM_PARAM_TIME_FORMAT_12HOUR);
+    if (clock_12h && date_time.tm_hour == 0)
+        date_time_str[DateTime::HOUR] = std::to_string(12);
+    else
+        date_time_str[DateTime::HOUR] = std::to_string(clock_12h && date_time.tm_hour > 12 ? (date_time.tm_hour - 12) : date_time.tm_hour);
+
     date_time_str[DateTime::CLOCK] = fmt::format("{}:{:0>2d}", date_time_str[DateTime::HOUR], date_time.tm_min);
-    date_time_str[DateTime::DAY_MOMENT] = is_afternoon ? "PM" : "AM";
+    date_time_str[DateTime::DAY_MOMENT] = date_time.tm_hour >= 12 ? "PM" : "AM";
 
     return date_time_str;
 }
 
-ImTextureID load_image(GuiState &gui, const char *data, const std::uint32_t size) {
+ImTextureID load_image(GuiState &gui, const uint8_t *data, const int size) {
     int width;
     int height;
 
-    stbi_uc *img_data = stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(data), size, &width, &height,
+    stbi_uc *img_data = stbi_load_from_memory(data, size, &width, &height,
         nullptr, STBI_rgb_alpha);
 
-    if (!data)
+    if (!img_data)
         return nullptr;
 
     const auto handle = ImGui_ImplSdl_CreateTexture(gui.imgui_state.get(), img_data, width, height);
@@ -690,8 +732,10 @@ ImTextureID load_image(GuiState &gui, const char *data, const std::uint32_t size
 }
 
 void pre_init(GuiState &gui, EmuEnvState &emuenv) {
-    ImGui::CreateContext();
-    gui.imgui_state.reset(ImGui_ImplSdl_Init(emuenv.renderer.get(), emuenv.window.get(), emuenv.base_path));
+    if (ImGui::GetCurrentContext() == NULL) {
+        ImGui::CreateContext();
+    }
+    gui.imgui_state.reset(ImGui_ImplSdl_Init(emuenv.renderer.get(), emuenv.window.get()));
 
     assert(gui.imgui_state);
 
@@ -733,16 +777,33 @@ void draw_begin(GuiState &gui, EmuEnvState &emuenv) {
         gui.app_selector.icon_async_loader->commit(gui);
 }
 
-void draw_end(GuiState &gui, SDL_Window *window) {
+void draw_end(GuiState &gui) {
     ImGui::Render();
     ImGui_ImplSdl_RenderDrawData(gui.imgui_state.get());
+}
+
+void draw_touchpad_cursor(EmuEnvState &emuenv) {
+    SceTouchPortType port;
+    const auto touchpad_fingers_pos = get_touchpad_fingers_pos(port);
+    if (touchpad_fingers_pos.empty())
+        return;
+
+    const ImVec2 RES_SCALE(emuenv.gui_scale.x, emuenv.gui_scale.y);
+    const ImVec2 SCALE(RES_SCALE.x * emuenv.manual_dpi_scale, RES_SCALE.y * emuenv.manual_dpi_scale);
+
+    const auto color = (port == SCE_TOUCH_PORT_FRONT) ? IM_COL32(0.f, 102.f, 204.f, 255.f) : IM_COL32(255.f, 0.f, 0.f, 255.f);
+    for (const auto &pos : touchpad_fingers_pos) {
+        auto x = emuenv.logical_viewport_pos.x + (pos.x * emuenv.logical_viewport_size.x);
+        auto y = emuenv.logical_viewport_pos.y + (pos.y * emuenv.logical_viewport_size.y);
+        ImGui::GetForegroundDrawList()->AddCircle(ImVec2(x, y), 20.f * SCALE.x, color, 0, 4.f * SCALE.x);
+    }
 }
 
 void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
     if (gui.vita_area.start_screen)
         draw_start_screen(gui, emuenv);
 
-    ImGui::PushFont(gui.vita_font);
+    ImGui::PushFont(gui.vita_font[emuenv.current_font_level]);
 
     if (gui.vita_area.app_close)
         draw_app_close(gui, emuenv);
@@ -750,14 +811,12 @@ void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
     if (gui.vita_area.home_screen)
         draw_home_screen(gui, emuenv);
 
-    if ((emuenv.cfg.show_info_bar || !emuenv.display.imgui_render || !gui.vita_area.home_screen) && gui.vita_area.information_bar)
-        draw_information_bar(gui, emuenv);
-
     if (gui.vita_area.live_area_screen)
         draw_live_area_screen(gui, emuenv);
     if (gui.vita_area.manual)
         draw_manual(gui, emuenv);
 
+    // Draw install dialogs
     if (gui.file_menu.archive_install_dialog)
         draw_archive_install_dialog(gui, emuenv);
     if (gui.file_menu.firmware_install_dialog)
@@ -770,13 +829,13 @@ void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
     if (gui.vita_area.user_management)
         draw_user_management(gui, emuenv);
 
-    if (emuenv.cfg.show_compile_shaders && !gui.shaders_compiled_display.empty())
+    if (emuenv.cfg.show_compile_shaders && gui.shaders_compiled_display_count > 0)
         draw_shaders_count_compiled(gui, emuenv);
 
     if (!gui.trophy_unlock_display_requests.empty())
         draw_trophies_unlocked(gui, emuenv);
 
-    if (emuenv.ime.state && !gui.vita_area.home_screen && !gui.vita_area.live_area_screen && get_sys_apps_state(gui))
+    if (emuenv.ime.state && !gui.vita_area.home_screen && !gui.vita_area.live_area_screen && !gui.vita_area.user_management && get_sys_apps_state(gui))
         draw_ime(emuenv.ime, emuenv);
 
     // System App
@@ -792,6 +851,9 @@ void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
     if (gui.help_menu.vita3k_update)
         draw_vita3k_update(gui, emuenv);
 
+    if ((emuenv.cfg.show_info_bar || !emuenv.display.imgui_render || !gui.vita_area.home_screen) && gui.vita_area.information_bar)
+        draw_information_bar(gui, emuenv);
+
     // Info Message
     if (!gui.info_message.msg.empty())
         draw_info_message(gui, emuenv);
@@ -800,9 +862,12 @@ void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
 }
 
 void draw_ui(GuiState &gui, EmuEnvState &emuenv) {
-    ImGui::PushFont(gui.vita_font);
-    if (!gui.vita_area.user_management)
+    ImGui::PushFont(gui.vita_font[emuenv.current_font_level]);
+    if ((gui.vita_area.home_screen || !emuenv.io.app_path.empty()) && get_sys_apps_state(gui) && !gui.vita_area.live_area_screen && !gui.vita_area.user_management && (!emuenv.cfg.show_info_bar || !gui.vita_area.information_bar))
         draw_main_menu_bar(gui, emuenv);
+
+    if (gui.configuration_menu.custom_settings_dialog || gui.configuration_menu.settings_dialog)
+        draw_settings_dialog(gui, emuenv);
 
     if (gui.controls_menu.controls_dialog)
         draw_controls_dialog(gui, emuenv);
@@ -816,7 +881,7 @@ void draw_ui(GuiState &gui, EmuEnvState &emuenv) {
 
     ImGui::PopFont();
 
-    ImGui::PushFont(gui.monospaced_font);
+    ImGui::PushFont(gui.monospaced_font[emuenv.current_font_level]);
 
     if (gui.debug_menu.threads_dialog)
         draw_threads_dialog(gui, emuenv);
@@ -839,10 +904,44 @@ void draw_ui(GuiState &gui, EmuEnvState &emuenv) {
     if (gui.debug_menu.disassembly_dialog)
         draw_disassembly_dialog(gui, emuenv);
 
-    if (gui.configuration_menu.custom_settings_dialog || gui.configuration_menu.settings_dialog)
-        draw_settings_dialog(gui, emuenv);
-
     ImGui::PopFont();
+}
+
+void SetTooltipEx(const char *tooltip) {
+    if (ImGui::IsItemHovered()) {
+        if (!ImGui::BeginTooltip())
+            return;
+        ImGui::PushTextWrapPos(ImGui::GetIO().DisplaySize.x - ImGui::GetStyle().WindowPadding.x * 2);
+        ImGui::Text("%s", tooltip);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+void TextColoredCentered(const ImVec4 &col, const char *text) {
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
+    ImGui::TextColored(col, "%s", text);
+}
+
+void TextCentered(const char *text) {
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
+    ImGui::Text("%s", text);
+}
+
+void TextColoredCentered(const ImVec4 &col, const char *text, float wrap_width) {
+    const auto window_width = ImGui::GetWindowWidth();
+    ImGui::PushTextWrapPos(window_width - wrap_width);
+    ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
+    ImGui::TextColored(col, "%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+void TextCentered(const char *text, float wrap_width) {
+    const auto window_width = ImGui::GetWindowWidth();
+    ImGui::PushTextWrapPos(window_width - wrap_width);
+    ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
+    ImGui::Text("%s", text);
+    ImGui::PopTextWrapPos();
 }
 
 } // namespace gui

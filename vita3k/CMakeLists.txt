@@ -1,8 +1,8 @@
 set(VITA3K_ORG_NAME "Vita3K")
 set(VITA3K_APP_NAME "Vita3K")
 set(VITA3K_APP_VER_HI 0)
-set(VITA3K_APP_VER_MID 1)
-set(VITA3K_APP_VER_LO 8)
+set(VITA3K_APP_VER_MID 2)
+set(VITA3K_APP_VER_LO 0)
 set(VITA3K_APP_VERSION "v${VITA3K_APP_VER_HI}.${VITA3K_APP_VER_MID}.${VITA3K_APP_VER_LO}")
 
 execute_process(
@@ -75,23 +75,9 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 	set(LINUX TRUE)
 endif()
 
-macro(configure_boost)
-	message("configuring boost")
+get_boost()
 
-	set(Boost_USE_STATIC_LIBS ON)
-	set(Boost_USE_MULTITHREADED ON)
-	set(BOOST_COMPONENTS filesystem system)
-
-	find_package(Boost COMPONENTS ${BOOST_COMPONENTS} REQUIRED)
-
-	include_directories(${Boost_INCLUDE_DIRS})
-
-	message("Using Boost_VERSION: ${Boost_VERSION}")
-	message("Using Boost_INCLUDE_DIRS: ${Boost_INCLUDE_DIRS}")
-	message("Using Boost_LIBRARY_DIRS: ${Boost_LIBRARY_DIRS}")
-endmacro(configure_boost)
-
-configure_boost()
+include_directories(${Boost_INCLUDE_DIRS})
 
 if (USE_DISCORD_RICH_PRESENCE)
 	add_definitions(-DUSE_DISCORD)
@@ -108,7 +94,6 @@ add_subdirectory(app)
 add_subdirectory(audio)
 add_subdirectory(config)
 add_subdirectory(cpu)
-add_subdirectory(crypto)
 add_subdirectory(ctrl)
 add_subdirectory(codec)
 add_subdirectory(compat)
@@ -126,10 +111,10 @@ add_subdirectory(ngs)
 add_subdirectory(np)
 add_subdirectory(emuenv)
 add_subdirectory(http)
-add_subdirectory(https)
 add_subdirectory(io)
 add_subdirectory(kernel)
 add_subdirectory(mem)
+add_subdirectory(patch)
 add_subdirectory(module)
 add_subdirectory(modules)
 add_subdirectory(motion)
@@ -147,12 +132,18 @@ add_subdirectory(vkutil)
 
 add_executable(vita3k MACOSX_BUNDLE main.cpp interface.cpp interface.h performance.cpp)
 
-target_link_libraries(vita3k PRIVATE app config ctrl display gdbstub gui gxm io miniz modules packages renderer shader touch)
+if(WIN32)
+	# This file is a bit special, it is run before anything else and must be added here
+	target_sources(vita3k PRIVATE util/src/vc_runtime_checker.cpp)
+endif()
+
+target_link_libraries(vita3k PRIVATE app config cppcommon ctrl display gdbstub gui gxm io miniz modules packages patch renderer shader touch util)
 if(USE_DISCORD_RICH_PRESENCE)
 	target_link_libraries(vita3k PRIVATE discord-rpc)
 endif()
+
 if(LINUX)
-	target_link_libraries(vita3k PRIVATE stdc++fs)
+	target_link_libraries(vita3k PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
 set_target_properties(vita3k PROPERTIES OUTPUT_NAME Vita3K
@@ -188,9 +179,9 @@ if(APPLE)
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/external/sdl/macos/SDL2.framework" "$<TARGET_FILE_DIR:vita3k>/../Frameworks/SDL2.framework")
 	if(USE_VITA3K_UPDATE)
 		add_custom_command(
-			TARGET vita3k
-			POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-macos.sh" "$<TARGET_FILE_DIR:vita3k>/../Resources/update-vita3k.sh")
+		TARGET vita3k
+		POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-macos.sh" "$<TARGET_FILE_DIR:vita3k>/../Resources/update-vita3k.sh")
 	endif()
 	if(USE_DISCORD_RICH_PRESENCE)
 		add_custom_command(
@@ -198,34 +189,57 @@ if(APPLE)
 		POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/external/discord_game_sdk/lib/x86_64/discord_game_sdk.dylib" "$<TARGET_FILE_DIR:vita3k>/../Resources")
 	endif()
-	set_target_properties(vita3k PROPERTIES LINK_FLAGS "-rpath @loader_path/../Frameworks/ -rpath @loader_path/../Resources/")
+	set_target_properties(vita3k PROPERTIES LINK_FLAGS "-rpath @loader_path/../Frameworks/ -rpath @loader_path/../Resources/ -ld64")
 	target_sources(vita3k PRIVATE Vita3K.icns)
 	set(MACOSX_BUNDLE_ICON_FILE Vita3K.icns)
 	set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.github.Vita3K.Vita3K")
 	set(MACOSX_BUNDLE_BUNDLE_NAME "Vita3K")
 
-	# taken from https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/DolphinQt/CMakeLists.txt
-	find_file(MOLTENVK_DYLIB NAMES libMoltenVK.dylib PATH_SUFFIXES lib)
-	if(NOT MOLTENVK_DYLIB)
-		message(FATAL_ERROR "Couldn't find libMoltenVK.dylib.")
-	else()
-		message("Found Molten-VK dylib: ${MOLTENVK_DYLIB}")
-	endif()
+	message(STATUS "MoltenVK dylib path: ${MOLTENVK_DYLIB}")
 	target_sources(vita3k PRIVATE ${MOLTENVK_DYLIB})
 	set_source_files_properties(${MOLTENVK_DYLIB} PROPERTIES MACOSX_PACKAGE_LOCATION Frameworks)
 elseif(LINUX)
 	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath='$ORIGIN'")
-	add_custom_command(
+	if(BUILD_APPIMAGE)
+		set(APPDIR "${CMAKE_BINARY_DIR}/AppImage")
+		add_custom_command(
 		TARGET vita3k
 		POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../data" "$<TARGET_FILE_DIR:vita3k>/data"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../lang" "$<TARGET_FILE_DIR:vita3k>/lang"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shaders-builtin" "$<TARGET_FILE_DIR:vita3k>/shaders-builtin")
+		COMMAND ${CMAKE_COMMAND} -E make_directory "${APPDIR}/usr/share/Vita3K"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../data" "${APPDIR}/usr/share/Vita3K/data"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../lang" "${APPDIR}/usr/share/Vita3K/lang"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shaders-builtin" "${APPDIR}/usr/share/Vita3K/shaders-builtin")
+		if(USE_VITA3K_UPDATE)
+			set(LINUXDEPLOY_WRAPPER "${CMAKE_SOURCE_DIR}/appimage/build_updater.sh")
+		else()
+			set(LINUXDEPLOY_WRAPPER "${CMAKE_SOURCE_DIR}/appimage/build.sh")
+		endif()
+		if(USE_DISCORD_RICH_PRESENCE)
+			set(DISCORD_LIB_APPIMAGE "-l \"${CMAKE_BINARY_DIR}/external/discord_game_sdk/lib/x86_64/libdiscord_game_sdk.so\"")
+		else()
+			set(DISCORD_LIB_APPIMAGE "")
+		endif()
+		add_custom_command(
+		TARGET vita3k
+		POST_BUILD
+		COMMAND ${LINUXDEPLOY_WRAPPER} ${LINUXDEPLOY_COMMAND} --appdir="${APPDIR}"
+			-e "$<TARGET_FILE:vita3k>" --icon-filename="vita3k"
+			-i "${CMAKE_CURRENT_SOURCE_DIR}/../data/image/icon.png" -d "${CMAKE_CURRENT_SOURCE_DIR}/../appimage/vita3k.desktop"
+			--custom-apprun="${CMAKE_CURRENT_SOURCE_DIR}/../appimage/apprun.sh" --output=appimage ${DISCORD_LIB_APPIMAGE}
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/*.AppImage*" "$<TARGET_FILE_DIR:vita3k>/"
+		COMMAND ${CMAKE_COMMAND} -E rm "${CMAKE_CURRENT_BINARY_DIR}/*.AppImage*")
+	endif()
+	add_custom_command(
+	TARGET vita3k
+	POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../data" "$<TARGET_FILE_DIR:vita3k>/data"
+	COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../lang" "$<TARGET_FILE_DIR:vita3k>/lang"
+	COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shaders-builtin" "$<TARGET_FILE_DIR:vita3k>/shaders-builtin")
 	if(USE_VITA3K_UPDATE)
 		add_custom_command(
-			TARGET vita3k
-			POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-linux.sh" "$<TARGET_FILE_DIR:vita3k>/update-vita3k.sh")
+		TARGET vita3k
+		POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-linux.sh" "$<TARGET_FILE_DIR:vita3k>/update-vita3k.sh")
 	endif()
 	if(USE_DISCORD_RICH_PRESENCE)
 		add_custom_command(
@@ -234,6 +248,7 @@ elseif(LINUX)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/external/discord_game_sdk/lib/x86_64/libdiscord_game_sdk.so" "$<TARGET_FILE_DIR:vita3k>")
 	endif()
 elseif(WIN32)
+	target_link_libraries(vita3k PRIVATE Version)
 	target_sources(vita3k PRIVATE resource.h Vita3K.ico Vita3K.rc Windows.manifest)
 	set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT vita3k)
 	set_target_properties(vita3k PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$(Configuration)")
@@ -243,15 +258,12 @@ elseif(WIN32)
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../data" "$<TARGET_FILE_DIR:vita3k>/data"
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../lang" "$<TARGET_FILE_DIR:vita3k>/lang"
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shaders-builtin" "$<TARGET_FILE_DIR:vita3k>/shaders-builtin"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PROJECT_SOURCE_DIR}/external/sdl/windows/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:vita3k>"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${UNICORN_DLL_DIR}/unicorn.dll" "$<TARGET_FILE_DIR:vita3k>"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${UNICORN_DLL_DIR}/libgcc_s_seh-1.dll" "$<TARGET_FILE_DIR:vita3k>"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${UNICORN_DLL_DIR}/libwinpthread-1.dll" "$<TARGET_FILE_DIR:vita3k>")
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PROJECT_SOURCE_DIR}/external/sdl/windows/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:vita3k>")
 	if(USE_VITA3K_UPDATE)
 		add_custom_command(
-			TARGET vita3k
-			POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-windows.bat" "$<TARGET_FILE_DIR:vita3k>/update-vita3k.bat")
+		TARGET vita3k
+		POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/script/update-windows.bat" "$<TARGET_FILE_DIR:vita3k>/update-vita3k.bat")
 	endif()
 	if(USE_DISCORD_RICH_PRESENCE)
 		add_custom_command(
@@ -259,12 +271,12 @@ elseif(WIN32)
 		POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/external/discord_game_sdk/lib/x86_64/discord_game_sdk.dll" "$<TARGET_FILE_DIR:vita3k>")
 	endif()
-	if(EXISTS "${CMAKE_BINARY_DIR}/external/openssl")
+	if(EXISTS "${OPENSSL_ROOT_DIR}")
 		add_custom_command(
 		TARGET vita3k
 		POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/external/openssl/openssl-3.0/x64/bin/libssl-3-x64.dll" "$<TARGET_FILE_DIR:vita3k>"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/external/openssl/openssl-3.0/x64/bin/libcrypto-3-x64.dll" "$<TARGET_FILE_DIR:vita3k>")
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENSSL_ROOT_DIR}/bin/libssl-3-x64.dll" "$<TARGET_FILE_DIR:vita3k>"
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENSSL_ROOT_DIR}/bin/libcrypto-3-x64.dll" "$<TARGET_FILE_DIR:vita3k>")
 	endif()
 endif()
 

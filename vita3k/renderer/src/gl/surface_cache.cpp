@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ void GLSurfaceCache::do_typeless_copy(const GLuint dest_texture, const GLuint so
     static constexpr GLsizei I32_SIGNED_MAX = 0x7FFFFFFF;
 
     if (!typeless_copy_buffer[0]) {
-        if (!typeless_copy_buffer.init(reinterpret_cast<renderer::Generator *>(glGenBuffers), reinterpret_cast<renderer::Deleter *>(glDeleteBuffers))) {
+        if (!typeless_copy_buffer.init(glGenBuffers, glDeleteBuffers)) {
             LOG_ERROR("Unable to initialize a typeless copy buffer");
             return;
         }
@@ -66,8 +66,8 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
     const uint32_t original_width = width;
     const uint32_t original_height = height;
 
-    width *= state.res_multiplier;
-    height *= state.res_multiplier;
+    width = static_cast<uint16_t>(width * state.res_multiplier);
+    height = static_cast<uint16_t>(height * state.res_multiplier);
 
     // Of course, this works under the assumption that range must be unique :D
     auto ite = color_surface_textures.lower_bound(key);
@@ -112,7 +112,7 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
         // There are four situations I think of:
         // 1. Different base address, lookup for write, in this case, if the cached surface range contains the given address, then
         // probably this cached surface has already been freed GPU-wise. So erase.
-        // 2. Same base address, but width and height change to be larger, or format change if write. Remake a new one for both read and write sitatation.
+        // 2. Same base address, but width and height change to be larger, or format change if write. Remake a new one for both read and write situation.
         // 3. Out of cache range. In write case, create a new one, in read case, lul
         // 4. Read situation with smaller width and height, probably need to extract the needed region out.
         const bool addr_in_range_of_cache = ((key + total_surface_size) <= (ite->first + info.total_bytes));
@@ -130,11 +130,11 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
         }
 
         if (cache_probably_freed) {
-            for (auto ite = framebuffer_array.begin(); ite != framebuffer_array.end();) {
-                if ((ite->first & 0xFFFFFFFF) == key) {
-                    ite = framebuffer_array.erase(ite);
+            for (auto fbuf_ite = framebuffer_array.begin(); fbuf_ite != framebuffer_array.end();) {
+                if ((fbuf_ite->first & 0xFFFFFFFF) == key) {
+                    fbuf_ite = framebuffer_array.erase(fbuf_ite);
                 } else {
-                    ite++;
+                    ++fbuf_ite;
                 }
             }
             // Clear out. We will recreate later
@@ -259,22 +259,20 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
                     // Check if the GL implementation actually store raw like this (a safe check)
                     if ((bytes_per_pixel_requested != color::bytes_per_pixel_in_gl_storage(base_format)) || (bytes_per_pixel_in_store != color::bytes_per_pixel_in_gl_storage(info.format))) {
                         LOG_ERROR("One or both two surface formats requested=0x{:X} and inStore=0x{:X} does not support bit-casting. Please report to developers!",
-                            base_format, info.format);
+                            fmt::underlying(base_format), fmt::underlying(info.format));
 
                         return 0;
                     }
                 } else {
-                    static bool has_happened = false;
-                    LOG_ERROR_IF(!has_happened, "Two surface formats requested=0x{:X} and inStore=0x{:X} are not castable!", base_format, info.format);
-                    has_happened = true;
+                    LOG_ERROR_ONCE("Two surface formats requested=0x{:X} and inStore=0x{:X} are not castable!", fmt::underlying(base_format), fmt::underlying(info.format));
                     return 0;
                 }
             }
 
             if (castable) {
                 const std::size_t data_delta = address.address() - ite->first;
-                std::size_t start_sourced_line = (data_delta / bytes_per_stride) * state.res_multiplier;
-                std::size_t start_x = (data_delta % bytes_per_stride) / color::bytes_per_pixel(base_format) * state.res_multiplier;
+                std::size_t start_sourced_line = static_cast<size_t>((data_delta / bytes_per_stride) * state.res_multiplier);
+                std::size_t start_x = static_cast<size_t>((data_delta % bytes_per_stride) / color::bytes_per_pixel(base_format) * state.res_multiplier);
 
                 if (static_cast<std::uint16_t>(start_sourced_line + height) > info.height) {
                     LOG_ERROR("Trying to present non-existen segment in cached color surface!");
@@ -330,7 +328,7 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
                     std::unique_ptr<GLCastedTexture> casted_info_unq = std::make_unique<GLCastedTexture>();
                     GLCastedTexture &casted_info = *casted_info_unq;
 
-                    if (!casted_info.texture.init(reinterpret_cast<renderer::Generator *>(glGenTextures), reinterpret_cast<renderer::Deleter *>(glDeleteTextures))) {
+                    if (!casted_info.texture.init(glGenTextures, glDeleteTextures)) {
                         LOG_ERROR("Failed to initialise cast color surface texture!");
                         return 0;
                     }
@@ -370,7 +368,7 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
                     if (state.features.preserve_f16_nan_as_u16 && color::is_write_surface_stored_rawly(info.format)) {
                         // Create a texture view
                         if (!info.gl_expected_read_texture_view[0]) {
-                            if (!info.gl_expected_read_texture_view.init(reinterpret_cast<renderer::Generator *>(glGenTextures), reinterpret_cast<renderer::Deleter *>(glDeleteTextures))) {
+                            if (!info.gl_expected_read_texture_view.init(glGenTextures, glDeleteTextures)) {
                                 LOG_ERROR("Unable to initialize texture view for casting texture!");
                                 return 0;
                             }
@@ -421,7 +419,7 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
     info_added->swizzle = swizzle;
     info_added->flags = 0;
 
-    if (!info_added->gl_texture.init(reinterpret_cast<renderer::Generator *>(glGenTextures), reinterpret_cast<renderer::Deleter *>(glDeleteTextures))) {
+    if (!info_added->gl_texture.init(glGenTextures, glDeleteTextures)) {
         LOG_ERROR("Failed to initialise color surface texture!");
         color_surface_textures.erase(key);
 
@@ -450,10 +448,8 @@ GLuint GLSurfaceCache::retrieve_color_surface_texture_handle(const State &state,
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
-    if (color_surface_textures.count(key) > 0) {
-        static bool has_happened = false;
-        LOG_WARN_IF(!has_happened, "Two different surfaces have the same base adress, this is not handled, an openGL error will happen.");
-        has_happened = true;
+    if (color_surface_textures.contains(key)) {
+        LOG_WARN_ONCE("Two different surfaces have the same base address, this is not handled, an openGL error will happen.");
     }
     color_surface_textures.emplace(key, std::move(info_added));
 
@@ -502,7 +498,7 @@ GLuint GLSurfaceCache::retrieve_ping_pong_color_surface_texture_handle(Ptr<void>
     GLenum surface_data_type = color::translate_type(info.format);
 
     if (!info.gl_ping_pong_texture[0]) {
-        if (!info.gl_ping_pong_texture.init(reinterpret_cast<renderer::Generator *>(glGenTextures), reinterpret_cast<renderer::Deleter *>(glDeleteTextures))) {
+        if (!info.gl_ping_pong_texture.init(glGenTextures, glDeleteTextures)) {
             LOG_ERROR("Failed to initialise ping pong surface texture!");
             return 0;
         }
@@ -525,26 +521,23 @@ GLuint GLSurfaceCache::retrieve_depth_stencil_texture_handle(const State &state,
         return 0;
     }
 
-    force_width *= state.res_multiplier;
-    force_height *= state.res_multiplier;
-
-    bool packed_ds = (surface.control.content & SceGxmDepthStencilControl::format_bits) == SCE_GXM_DEPTH_STENCIL_FORMAT_S8D24;
-
-    if (force_width < 0) {
+    if (force_width > 0)
+        force_width = static_cast<int32_t>(force_width * state.res_multiplier);
+    else
         force_width = target->width;
-    }
 
-    if (force_height < 0) {
+    if (force_height > 0)
+        force_height = static_cast<int32_t>(force_height * state.res_multiplier);
+    else
         force_height = target->height;
-    }
 
-    const bool is_stencil_only = surface.depthData.address() == 0;
+    const bool is_stencil_only = surface.depth_data.address() == 0;
     std::size_t found_index = static_cast<std::size_t>(-1);
 
     // The whole depth stencil struct is reserved for future use
     for (std::size_t i = 0; i < depth_stencil_textures.size(); i++) {
-        if ((!is_stencil_only && depth_stencil_textures[i].surface.depthData == surface.depthData)
-            || (is_stencil_only && depth_stencil_textures[i].surface.stencilData == surface.stencilData)) {
+        if ((!is_stencil_only && depth_stencil_textures[i].surface.depth_data == surface.depth_data)
+            || (is_stencil_only && depth_stencil_textures[i].surface.stencil_data == surface.stencil_data)) {
             found_index = i;
             break;
         }
@@ -608,7 +601,7 @@ GLuint GLSurfaceCache::retrieve_depth_stencil_texture_handle(const State &state,
         for (std::size_t i = 0; i < depth_stencil_textures.size(); i++) {
             if (depth_stencil_textures[i].flags & GLSurfaceCacheInfo::FLAG_FREE) {
                 if (depth_stencil_textures[i].gl_texture[0] == 0) {
-                    if (!depth_stencil_textures[i].gl_texture.init(reinterpret_cast<renderer::Generator *>(glGenTextures), reinterpret_cast<renderer::Deleter *>(glDeleteTextures))) {
+                    if (!depth_stencil_textures[i].gl_texture.init(glGenTextures, glDeleteTextures)) {
                         LOG_ERROR("Fail to initialize depth stencil texture!");
                         return 0;
                     }
@@ -653,15 +646,15 @@ GLuint GLSurfaceCache::retrieve_framebuffer_handle(const State &state, const Mem
 
     if (color) {
         std::uint32_t swizzle_set = color->colorFormat & SCE_GXM_COLOR_SWIZZLE_MASK;
-        color_handle = static_cast<GLuint>(retrieve_color_surface_texture_handle(state, color->width,
+        color_handle = retrieve_color_surface_texture_handle(state, color->width,
             color->height, color->strideInPixels, gxm::get_base_format(color->colorFormat), color->data,
-            renderer::SurfaceTextureRetrievePurpose::WRITING, swizzle_set, stored_height));
+            SurfaceTextureRetrievePurpose::WRITING, swizzle_set, stored_height);
     } else {
         color_handle = target->attachments[0];
     }
 
     if (depth_stencil) {
-        ds_handle = static_cast<GLuint>(retrieve_depth_stencil_texture_handle(state, mem, *depth_stencil));
+        ds_handle = retrieve_depth_stencil_texture_handle(state, mem, *depth_stencil);
     } else {
         ds_handle = target->attachments[1];
     }
@@ -683,7 +676,7 @@ GLuint GLSurfaceCache::retrieve_framebuffer_handle(const State &state, const Mem
 
     // Create a new framebuffer for our sake
     GLObjectArray<1> &fb = framebuffer_array[key];
-    if (!fb.init(reinterpret_cast<renderer::Generator *>(glGenFramebuffers), reinterpret_cast<renderer::Deleter *>(glDeleteFramebuffers))) {
+    if (!fb.init(glGenFramebuffers, glDeleteFramebuffers)) {
         LOG_ERROR("Can't initialize framebuffer!");
         return 0;
     }
@@ -704,7 +697,7 @@ GLuint GLSurfaceCache::retrieve_framebuffer_handle(const State &state, const Mem
         LOG_ERROR("Framebuffer is not completed. Proceed anyway...");
 
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClearDepth(1.0f);
+    glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -719,14 +712,14 @@ GLuint GLSurfaceCache::retrieve_framebuffer_handle(const State &state, const Mem
     return fb[0];
 }
 
-GLuint GLSurfaceCache::sourcing_color_surface_for_presentation(Ptr<const void> address, uint32_t width, uint32_t height, const std::uint32_t pitch, float *uvs, const int res_multiplier, SceFVector2 &texture_size) {
+GLuint GLSurfaceCache::sourcing_color_surface_for_presentation(Ptr<const void> address, uint32_t width, uint32_t height, const std::uint32_t pitch, float *uvs, const float res_multiplier, SceFVector2 &texture_size) {
     auto ite = color_surface_textures.lower_bound(address.address());
     if (ite == color_surface_textures.end()) {
         return 0;
     }
 
-    width *= res_multiplier;
-    height *= res_multiplier;
+    width = static_cast<uint32_t>(width * res_multiplier);
+    height = static_cast<uint32_t>(height * res_multiplier);
 
     const GLColorSurfaceCacheInfo &info = *ite->second;
 
@@ -735,7 +728,7 @@ GLuint GLSurfaceCache::sourcing_color_surface_for_presentation(Ptr<const void> a
         const std::size_t data_delta = address.address() - ite->first;
         std::uint32_t limited_height = height;
         if ((data_delta % (pitch * 4)) == 0) {
-            std::uint32_t start_sourced_line = (data_delta / (pitch * 4)) * res_multiplier;
+            std::uint32_t start_sourced_line = static_cast<uint32_t>((data_delta / (pitch * 4)) * res_multiplier);
             if ((start_sourced_line + height) > info.height) {
                 // Sometimes the surface is just missing a little bit of lines
                 if (start_sourced_line < info.height) {
@@ -762,6 +755,49 @@ GLuint GLSurfaceCache::sourcing_color_surface_for_presentation(Ptr<const void> a
     }
 
     return 0;
+}
+
+std::vector<uint32_t> GLSurfaceCache::dump_frame(Ptr<const void> address, uint32_t width, uint32_t height, uint32_t pitch, float res_multiplier, bool support_get_texture_sub_image) {
+    auto ite = color_surface_textures.lower_bound(address.address());
+    if (ite == color_surface_textures.end() || ite->second->pixel_stride != pitch) {
+        return {};
+    }
+
+    const GLColorSurfaceCacheInfo &info = *ite->second;
+
+    const uint32_t data_delta = address.address() - ite->first;
+    const uint32_t pitch_byte = pitch * 4;
+    if (info.pixel_stride != pitch || data_delta % pitch_byte != 0)
+        return {};
+
+    const uint32_t line_delta = static_cast<uint32_t>((data_delta / pitch_byte) * res_multiplier);
+    if (line_delta >= info.height)
+        return {};
+
+    if (!support_get_texture_sub_image && (line_delta != 0 || info.width != width || info.height != height)) {
+        LOG_ERROR("Dumping this frame is not supported on the OpenGL renderer");
+        return {};
+    }
+
+    const uint32_t real_height = std::min(height, info.height - line_delta);
+
+    std::vector<uint32_t> frame(width * height, 0);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+
+    // retrieve the texture, it is on the GPU right now
+    if (support_get_texture_sub_image) {
+        glGetTextureSubImage(info.gl_texture[0], 0, 0, line_delta, 0, width, real_height, 1, GL_RGBA, GL_UNSIGNED_BYTE, frame.size() * 4, frame.data());
+    } else {
+        GLint last_texture = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture);
+
+        glBindTexture(GL_TEXTURE_2D, info.gl_texture[0]);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, frame.data());
+
+        glBindTexture(GL_TEXTURE_2D, last_texture);
+    }
+
+    return frame;
 }
 
 } // namespace renderer::gl

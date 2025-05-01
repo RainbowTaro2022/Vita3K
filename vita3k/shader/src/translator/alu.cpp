@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -131,7 +131,7 @@ bool USSETranslatorVisitor::vmad(
 
     set_repeat_multiplier(2, 2, 2, 4);
 
-    // Write mask is a 4-bit immidiate
+    // Write mask is a 4-bit immediate
     // If a bit is one, a swizzle is active
     BEGIN_REPEAT(repeat_count)
     GET_REPEAT(inst, repeat_mode);
@@ -195,7 +195,7 @@ bool USSETranslatorVisitor::vmad2(
 
     const DataType inst_dt = (dat_fmt) ? DataType::F16 : DataType::F32;
 
-    // Decode mandantory info first
+    // Decode mandatory info first
     inst.opr.dest = decode_dest(inst.opr.dest, dest_n, dest_bank, false, true, 7, m_second_program);
     inst.opr.src0 = decode_src0(inst.opr.src0, src0_n, src0_bank, false, true, 7, m_second_program);
     inst.opr.src1 = decode_src12(inst.opr.src1, src1_n, src1_bank, src1_bank_ext, true, 7, m_second_program);
@@ -700,7 +700,7 @@ bool USSETranslatorVisitor::vcomp(
     inst.opr.dest.swizzle = SWIZZLE_CHANNEL_4_DEFAULT;
 
     // TODO: Should we do this ?
-    std::uint32_t src_mask = 0;
+    uint32_t src_mask = 0;
 
     // Build the source mask. It should only be one component
     switch (src_comp) {
@@ -726,12 +726,18 @@ bool USSETranslatorVisitor::vcomp(
 
     default: break;
     }
+    // (upper bound on the) number of components to set in the destination
+    const uint32_t nb_components = std::bit_width(write_mask);
 
     m_b.setLine(m_recompiler.cur_pc);
 
     // TODO: Log
     BEGIN_REPEAT(repeat_count)
     GET_REPEAT(inst, RepeatMode::SLMSI);
+
+    LOG_DISASM("{:016x}: {}{} {} {}", m_instr, disasm::e_predicate_str(pred), disasm::opcode_str(op), disasm::operand_to_str(inst.opr.dest, write_mask, dest_repeat_offset),
+        disasm::operand_to_str(inst.opr.src1, src_mask, src1_repeat_offset));
+
     spv::Id result = load(inst.opr.src1, src_mask, src1_repeat_offset);
 
     if (result == spv::NoResult) {
@@ -741,24 +747,8 @@ bool USSETranslatorVisitor::vcomp(
 
     switch (op) {
     case Opcode::VRCP: {
-        // We have to manually divide by 1
-        const int num_comp = m_b.getNumComponents(result);
-        const spv::Id one_const = m_b.makeFloatConstant(1.0f);
-        spv::Id one_v = spv::NoResult;
-
-        if (num_comp == 1) {
-            one_v = one_const;
-        } else {
-            std::vector<spv::Id> composite_values(num_comp);
-
-            std::fill_n(composite_values.begin(), num_comp, one_const);
-            one_v = m_b.makeCompositeConstant(type_f32_v[num_comp], composite_values);
-
-            std::fill_n(composite_values.begin(), num_comp, result);
-            result = m_b.createCompositeConstruct(type_f32_v[num_comp], composite_values);
-        }
-
-        result = m_b.createBinOp(spv::OpFDiv, m_b.getTypeId(result), one_v, result);
+        // Get the inverse
+        result = m_b.createBinOp(spv::OpFDiv, m_b.getTypeId(result), m_b.makeFloatConstant(1.0f), result);
         break;
     }
 
@@ -779,9 +769,8 @@ bool USSETranslatorVisitor::vcomp(
         // hack (kind of) :
         // define exp(Nan) as 1.0, this is needed for Freedom Wars to render properly
         const spv::Id exp_val = m_b.createBuiltinCall(m_b.getTypeId(result), std_builtins, GLSLstd450Exp, { result });
-        const int num_comp = m_b.getNumComponents(result);
         const spv::Id ones = utils::make_uniform_vector_from_type(m_b, m_b.getTypeId(result), 1.0f);
-        const spv::Id is_nan = m_b.createUnaryOp(spv::OpIsNan, utils::make_vector_or_scalar_type(m_b, m_b.makeBoolType(), num_comp), result);
+        const spv::Id is_nan = m_b.createUnaryOp(spv::OpIsNan, m_b.makeBoolType(), result);
         result = m_b.createTriOp(spv::OpSelect, m_b.getTypeId(result), is_nan, ones, exp_val);
         break;
     }
@@ -790,10 +779,14 @@ bool USSETranslatorVisitor::vcomp(
         break;
     }
 
+    if (nb_components > 1) {
+        std::vector<spv::Id> composite_values(nb_components);
+        std::fill_n(composite_values.begin(), nb_components, result);
+        result = m_b.createCompositeConstruct(type_f32_v[nb_components], composite_values);
+    }
+
     store(inst.opr.dest, result, write_mask, dest_repeat_offset);
 
-    LOG_DISASM("{:016x}: {}{} {} {}", m_instr, disasm::e_predicate_str(pred), disasm::opcode_str(op), disasm::operand_to_str(inst.opr.dest, write_mask, dest_repeat_offset),
-        disasm::operand_to_str(inst.opr.src1, src_mask, src1_repeat_offset));
     END_REPEAT()
 
     return true;
@@ -1006,10 +999,10 @@ bool USSETranslatorVisitor::sop2(
     spv::Id src1_alpha = load(inst.opr.src1, 0b1000, src1_repeat_offset);
     spv::Id src2_alpha = load(inst.opr.src2, 0b1000, src2_repeat_offset);
 
-    src1_color = utils::convert_to_float(m_b, src1_color, DataType::UINT8, true);
-    src2_color = utils::convert_to_float(m_b, src2_color, DataType::UINT8, true);
-    src1_alpha = utils::convert_to_float(m_b, src1_alpha, DataType::UINT8, true);
-    src2_alpha = utils::convert_to_float(m_b, src2_alpha, DataType::UINT8, true);
+    src1_color = utils::convert_to_float(m_b, m_util_funcs, src1_color, DataType::UINT8, true);
+    src2_color = utils::convert_to_float(m_b, m_util_funcs, src2_color, DataType::UINT8, true);
+    src1_alpha = utils::convert_to_float(m_b, m_util_funcs, src1_alpha, DataType::UINT8, true);
+    src2_alpha = utils::convert_to_float(m_b, m_util_funcs, src2_alpha, DataType::UINT8, true);
 
     spv::Id src_color_type = m_b.getTypeId(src1_color);
     spv::Id src_alpha_type = m_b.getTypeId(src1_alpha);
@@ -1044,8 +1037,8 @@ bool USSETranslatorVisitor::sop2(
     auto color_res = apply_opcode(color_op, src_color_type, factored_rgb_lhs, factored_rgb_rhs);
     auto alpha_res = apply_opcode(alpha_op, src_alpha_type, factored_a_lhs, factored_a_rhs);
 
-    color_res = utils::convert_to_int(m_b, color_res, DataType::UINT8, true);
-    alpha_res = utils::convert_to_int(m_b, alpha_res, DataType::UINT8, true);
+    color_res = utils::convert_to_int(m_b, m_util_funcs, color_res, DataType::UINT8, true);
+    alpha_res = utils::convert_to_int(m_b, m_util_funcs, alpha_res, DataType::UINT8, true);
 
     // Final result. Do binary operation and then store
     store(inst.opr.dest, color_res, 0b0111, dest_repeat_offset);
@@ -1093,11 +1086,11 @@ bool shader::usse::USSETranslatorVisitor::sop2m(Imm2 pred,
     };
 
     static auto selector_src1_alpha = [](spv::Builder &b, const spv::Id type, const spv::Id src1, const spv::Id src2) {
-        return b.createOp(spv::OpVectorShuffle, type, { src1, src1, 3, 3, 3, 3 });
+        return b.createOp(spv::OpVectorShuffle, type, { { true, src1 }, { true, src1 }, { false, 3 }, { false, 3 }, { false, 3 }, { false, 3 } });
     };
 
     static auto selector_src2_alpha = [](spv::Builder &b, spv::Id type, const spv::Id src1, const spv::Id src2) {
-        return b.createOp(spv::OpVectorShuffle, type, { src2, src2, 3, 3, 3, 3 });
+        return b.createOp(spv::OpVectorShuffle, type, { { true, src2 }, { true, src2 }, { false, 3 }, { false, 3 }, { false, 3 }, { false, 3 } });
     };
 
     // This opcode always operates on C10.
@@ -1198,8 +1191,8 @@ bool shader::usse::USSETranslatorVisitor::sop2m(Imm2 pred,
     spv::Id src1 = load(inst.opr.src1, 0b1111, 0);
     spv::Id src2 = load(inst.opr.src2, 0b1111, 0);
 
-    src1 = utils::convert_to_float(m_b, src1, DataType::UINT8, true);
-    src2 = utils::convert_to_float(m_b, src2, DataType::UINT8, true);
+    src1 = utils::convert_to_float(m_b, m_util_funcs, src1, DataType::UINT8, true);
+    src2 = utils::convert_to_float(m_b, m_util_funcs, src2, DataType::UINT8, true);
 
     spv::Id src_type = m_b.getTypeId(src1);
 
@@ -1230,7 +1223,7 @@ bool shader::usse::USSETranslatorVisitor::sop2m(Imm2 pred,
         result = m_b.createTriOp(spv::OpVectorInsertDynamic, src_type, result, apply_opcode(alpha_op, alpha_type, a1, a2), alpha_index);
     }
 
-    result = utils::convert_to_int(m_b, result, DataType::UINT8, true);
+    result = utils::convert_to_int(m_b, m_util_funcs, result, DataType::UINT8, true);
 
     // Final result. Do binary operation and then store
     store(inst.opr.dest, result, wmask, 0);
@@ -1449,12 +1442,12 @@ bool shader::usse::USSETranslatorVisitor::sop3(Imm2 pred,
     spv::Id src1_alpha = load(inst.opr.src1, 0b1000);
     spv::Id src2_alpha = load(inst.opr.src2, 0b1000);
 
-    src0_color = utils::convert_to_float(m_b, src0_color, DataType::UINT8, true);
-    src1_color = utils::convert_to_float(m_b, src1_color, DataType::UINT8, true);
-    src2_color = utils::convert_to_float(m_b, src2_color, DataType::UINT8, true);
-    src0_alpha = utils::convert_to_float(m_b, src0_alpha, DataType::UINT8, true);
-    src1_alpha = utils::convert_to_float(m_b, src1_alpha, DataType::UINT8, true);
-    src2_alpha = utils::convert_to_float(m_b, src2_alpha, DataType::UINT8, true);
+    src0_color = utils::convert_to_float(m_b, m_util_funcs, src0_color, DataType::UINT8, true);
+    src1_color = utils::convert_to_float(m_b, m_util_funcs, src1_color, DataType::UINT8, true);
+    src2_color = utils::convert_to_float(m_b, m_util_funcs, src2_color, DataType::UINT8, true);
+    src0_alpha = utils::convert_to_float(m_b, m_util_funcs, src0_alpha, DataType::UINT8, true);
+    src1_alpha = utils::convert_to_float(m_b, m_util_funcs, src1_alpha, DataType::UINT8, true);
+    src2_alpha = utils::convert_to_float(m_b, m_util_funcs, src2_alpha, DataType::UINT8, true);
 
     spv::Id src_color_type = m_b.getTypeId(src0_color);
     spv::Id src_alpha_type = m_b.getTypeId(src0_alpha);
@@ -1484,8 +1477,8 @@ bool shader::usse::USSETranslatorVisitor::sop3(Imm2 pred,
     auto color_res = apply_opcode(color_op, src_color_type, factored_rgb_lhs, factored_rgb_rhs);
     auto alpha_res = apply_opcode(alpha_op, src_alpha_type, factored_a_lhs, factored_a_rhs);
 
-    color_res = utils::convert_to_int(m_b, color_res, DataType::UINT8, true);
-    alpha_res = utils::convert_to_int(m_b, alpha_res, DataType::UINT8, true);
+    color_res = utils::convert_to_int(m_b, m_util_funcs, color_res, DataType::UINT8, true);
+    alpha_res = utils::convert_to_int(m_b, m_util_funcs, alpha_res, DataType::UINT8, true);
 
     // Final result. Do binary operation and then store
     store(inst.opr.dest, color_res, 0b0111, 0);
@@ -1499,9 +1492,9 @@ bool shader::usse::USSETranslatorVisitor::sop3(Imm2 pred,
 }
 
 enum class DualSrcId {
-    INTERAL0,
+    INTERNAL0,
     INTERNAL1,
-    INTERAL2,
+    INTERNAL2,
     UNIFIED,
     NONE,
 };
@@ -1513,26 +1506,26 @@ static std::optional<DualSrcLayout> get_dual_op1_src_layout(uint8_t count, Imm2 
     case 1:
         switch (config) {
         case 0: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::NONE, DualSrcId::NONE });
-        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::NONE, DualSrcId::NONE });
+        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::NONE, DualSrcId::NONE });
         case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::NONE, DualSrcId::NONE });
-        case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL2, DualSrcId::NONE, DualSrcId::NONE });
+        case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL2, DualSrcId::NONE, DualSrcId::NONE });
         default:
             return {};
         }
     case 2:
         switch (config) {
         case 0: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::NONE });
-        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::UNIFIED, DualSrcId::NONE });
-        case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERNAL1, DualSrcId::NONE });
+        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::UNIFIED, DualSrcId::NONE });
+        case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL1, DualSrcId::NONE });
         default:
             return {};
         }
     case 3:
         switch (config) {
-        case 0: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::INTERAL2 });
-        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::UNIFIED, DualSrcId::INTERAL2 });
-        case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERNAL1, DualSrcId::UNIFIED });
-        case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERNAL1, DualSrcId::INTERAL2 });
+        case 0: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::INTERNAL2 });
+        case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::UNIFIED, DualSrcId::INTERNAL2 });
+        case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL1, DualSrcId::UNIFIED });
+        case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL1, DualSrcId::INTERNAL2 });
         default:
             return {};
         }
@@ -1550,7 +1543,7 @@ static std::optional<DualSrcLayout> get_dual_op2_src_layout(uint8_t op1_count, u
         switch (op2_count) {
         case 1:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::NONE, DualSrcId::NONE });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::NONE, DualSrcId::NONE });
             case 1:
             case 2:
             case 3:
@@ -1559,18 +1552,18 @@ static std::optional<DualSrcLayout> get_dual_op2_src_layout(uint8_t op1_count, u
             }
         case 2:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERNAL1, DualSrcId::NONE });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL1, DualSrcId::NONE });
             case 1: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::NONE });
-            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::UNIFIED, DualSrcId::NONE });
+            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::UNIFIED, DualSrcId::NONE });
             case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::UNIFIED, DualSrcId::NONE });
             default: return {};
             }
         case 3:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERNAL1, DualSrcId::INTERAL2 });
-            case 1: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::INTERAL2 });
-            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::UNIFIED, DualSrcId::INTERAL2 });
-            case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::UNIFIED, DualSrcId::INTERNAL1 });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL1, DualSrcId::INTERNAL2 });
+            case 1: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::INTERNAL1, DualSrcId::INTERNAL2 });
+            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::UNIFIED, DualSrcId::INTERNAL2 });
+            case 3: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::UNIFIED, DualSrcId::INTERNAL1 });
             default: return {};
             }
         default: return {};
@@ -1579,16 +1572,16 @@ static std::optional<DualSrcLayout> get_dual_op2_src_layout(uint8_t op1_count, u
         switch (op2_count) {
         case 1:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::NONE, DualSrcId::NONE });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::NONE, DualSrcId::NONE });
             case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::NONE, DualSrcId::NONE });
             case 2: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::NONE, DualSrcId::NONE });
             default: return {};
             }
         case 2:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::INTERAL2, DualSrcId::NONE });
-            case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::INTERAL2, DualSrcId::NONE });
-            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL2, DualSrcId::UNIFIED, DualSrcId::NONE });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::INTERNAL2, DualSrcId::NONE });
+            case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::INTERNAL2, DualSrcId::NONE });
+            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL2, DualSrcId::UNIFIED, DualSrcId::NONE });
             default: return {};
             }
         default: return {};
@@ -1597,9 +1590,9 @@ static std::optional<DualSrcLayout> get_dual_op2_src_layout(uint8_t op1_count, u
         switch (op2_count) {
         case 1:
             switch (src_config) {
-            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL0, DualSrcId::NONE, DualSrcId::NONE });
+            case 0: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL0, DualSrcId::NONE, DualSrcId::NONE });
             case 1: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL1, DualSrcId::NONE, DualSrcId::NONE });
-            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERAL2, DualSrcId::NONE, DualSrcId::NONE });
+            case 2: return std::optional<DualSrcLayout>({ DualSrcId::INTERNAL2, DualSrcId::NONE, DualSrcId::NONE });
             case 3: return std::optional<DualSrcLayout>({ DualSrcId::UNIFIED, DualSrcId::NONE, DualSrcId::NONE });
             default: return {};
             }
@@ -1682,7 +1675,7 @@ bool USSETranslatorVisitor::vdual(
     };
 
     // Each instruction might have a different source layout or write mask depending on how the instruction works.
-    // Let's store insturction information in a map so it's easy for each instruction to be loaded.
+    // Let's store instruction information in a map so it's easy for each instruction to be loaded.
     struct DualOpInfo {
         uint8_t src_count;
         bool vector_load;
@@ -1775,14 +1768,13 @@ bool USSETranslatorVisitor::vdual(
                 op = decode_src12(op, unified_store_slot_num, unified_store_slot_bank, false,
                     code_info.vector_load, code_info.vector_load ? 8 : 7, m_second_program);
                 // gpi2_slot_num_bit_1 is also unified source ext
-                op.swizzle = decode_dual_swizzle(unified_store_swizz,
-                    op1_src_count >= 2 ? false : gpi2_slot_num_bit_1, comp_count_type);
-                if ((op1_src_count <= 2) && gpi2_slot_num_bit_0_or_unified_store_abs)
+                op.swizzle = decode_dual_swizzle(unified_store_swizz, op1_src_count < 2 && gpi2_slot_num_bit_1, comp_count_type);
+                if (op1_src_count < 2 && gpi2_slot_num_bit_0_or_unified_store_abs)
                     op.flags |= RegisterFlags::Absolute;
                 if (unified_store_neg)
                     op.flags |= RegisterFlags::Negative;
                 break;
-            case DualSrcId::INTERAL0:
+            case DualSrcId::INTERNAL0:
                 op.bank = RegisterBank::FPINTERNAL;
                 op.num = gpi0_slot_num;
                 op.swizzle = decode_dual_swizzle(gpi0_swizz, false, comp_count_type);
@@ -1794,7 +1786,7 @@ bool USSETranslatorVisitor::vdual(
                 if (gpi1_neg)
                     op.flags |= RegisterFlags::Negative;
                 break;
-            case DualSrcId::INTERAL2:
+            case DualSrcId::INTERNAL2:
                 op.bank = RegisterBank::FPINTERNAL;
                 op.num = op1_src_count >= 2 ? (gpi2_slot_num_bit_1 << 1u | gpi2_slot_num_bit_0_or_unified_store_abs) : 2;
                 op.swizzle = SWIZZLE_CHANNEL_4(X, Y, Z, W);

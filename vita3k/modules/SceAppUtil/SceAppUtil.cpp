@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,17 +15,18 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceAppUtil.h"
+#include <module/module.h>
 
 #include <emuenv/app_util.h>
 #include <io/device.h>
 #include <io/functions.h>
 #include <io/io.h>
 #include <io/vfs.h>
+#include <packages/license.h>
 #include <util/safe_time.h>
 #include <util/tracy.h>
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <winsock.h>
 #else
 #include <unistd.h>
@@ -146,7 +147,7 @@ EXPORT(SceInt32, sceAppUtilAppParamGetInt, SceAppUtilAppParamId paramId, SceInt3
     if (!value)
         return RET_ERROR(SCE_APPUTIL_ERROR_NOT_INITIALIZED);
 
-    *value = emuenv.app_sku_flag;
+    *value = emuenv.license.rif[emuenv.io.title_id].sku_flag;
 
     return 0;
 }
@@ -157,7 +158,7 @@ EXPORT(int, sceAppUtilBgdlGetStatus) {
 }
 
 static bool is_addcont_exist(EmuEnvState &emuenv, const SceChar8 *path) {
-    const auto drm_content_id_path{ fs::path(emuenv.pref_path) / (+VitaIoDevice::ux0)._to_string() / emuenv.io.device_paths.addcont0 / reinterpret_cast<const char *>(path) };
+    const auto drm_content_id_path{ emuenv.pref_path / (+VitaIoDevice::ux0)._to_string() / emuenv.io.device_paths.addcont0 / reinterpret_cast<const char *>(path) };
     return (fs::exists(drm_content_id_path) && (!fs::is_empty(drm_content_id_path)));
 }
 
@@ -377,8 +378,7 @@ EXPORT(SceInt32, sceAppUtilSaveDataSlotSearch, SceAppUtilWorkBuffer *workBuf, co
         case SCE_APPUTIL_SAVEDATA_SLOT_SEARCH_TYPE_EXIST_SLOT:
             if (fd > 0) {
                 if (slotList) {
-                    SceAppUtilSaveDataSlotParam param;
-                    memset(&param, 0, sizeof(SceAppUtilSaveDataSlotParam));
+                    SceAppUtilSaveDataSlotParam param{};
                     read_file(&param, emuenv.io, fd, sizeof(SceAppUtilSaveDataSlotParam), export_name);
                     slotList[result->hitNum].userParam = param.userParam;
                     slotList[result->hitNum].status = param.status;
@@ -520,50 +520,3 @@ EXPORT(int, sceAppUtilSystemParamGetString, unsigned int paramId, SceChar8 *buf,
     }
     return 0;
 }
-
-BRIDGE_IMPL(sceAppUtilAddCookieWebBrowser)
-BRIDGE_IMPL(sceAppUtilAddcontMount)
-BRIDGE_IMPL(sceAppUtilAddcontUmount)
-BRIDGE_IMPL(sceAppUtilAppEventParseGameCustomData)
-BRIDGE_IMPL(sceAppUtilAppEventParseIncomingDialog)
-BRIDGE_IMPL(sceAppUtilAppEventParseLiveArea)
-BRIDGE_IMPL(sceAppUtilAppEventParseNearGift)
-BRIDGE_IMPL(sceAppUtilAppEventParseNpActivity)
-BRIDGE_IMPL(sceAppUtilAppEventParseNpAppDataMessage)
-BRIDGE_IMPL(sceAppUtilAppEventParseNpBasicJoinablePresence)
-BRIDGE_IMPL(sceAppUtilAppEventParseNpInviteMessage)
-BRIDGE_IMPL(sceAppUtilAppEventParseScreenShotNotification)
-BRIDGE_IMPL(sceAppUtilAppEventParseSessionInvitation)
-BRIDGE_IMPL(sceAppUtilAppEventParseTeleport)
-BRIDGE_IMPL(sceAppUtilAppEventParseTriggerUtil)
-BRIDGE_IMPL(sceAppUtilAppEventParseWebBrowser)
-BRIDGE_IMPL(sceAppUtilAppParamGetInt)
-BRIDGE_IMPL(sceAppUtilBgdlGetStatus)
-BRIDGE_IMPL(sceAppUtilDrmClose)
-BRIDGE_IMPL(sceAppUtilDrmOpen)
-BRIDGE_IMPL(sceAppUtilInit)
-BRIDGE_IMPL(sceAppUtilLaunchWebBrowser)
-BRIDGE_IMPL(sceAppUtilLoadSafeMemory)
-BRIDGE_IMPL(sceAppUtilMusicMount)
-BRIDGE_IMPL(sceAppUtilMusicUmount)
-BRIDGE_IMPL(sceAppUtilPhotoMount)
-BRIDGE_IMPL(sceAppUtilPhotoUmount)
-BRIDGE_IMPL(sceAppUtilPspSaveDataGetDirNameList)
-BRIDGE_IMPL(sceAppUtilPspSaveDataLoad)
-BRIDGE_IMPL(sceAppUtilReceiveAppEvent)
-BRIDGE_IMPL(sceAppUtilResetCookieWebBrowser)
-BRIDGE_IMPL(sceAppUtilSaveDataDataRemove)
-BRIDGE_IMPL(sceAppUtilSaveDataDataSave)
-BRIDGE_IMPL(sceAppUtilSaveDataGetQuota)
-BRIDGE_IMPL(sceAppUtilSaveDataMount)
-BRIDGE_IMPL(sceAppUtilSaveDataSlotCreate)
-BRIDGE_IMPL(sceAppUtilSaveDataSlotDelete)
-BRIDGE_IMPL(sceAppUtilSaveDataSlotGetParam)
-BRIDGE_IMPL(sceAppUtilSaveDataSlotSearch)
-BRIDGE_IMPL(sceAppUtilSaveDataSlotSetParam)
-BRIDGE_IMPL(sceAppUtilSaveDataUmount)
-BRIDGE_IMPL(sceAppUtilSaveSafeMemory)
-BRIDGE_IMPL(sceAppUtilShutdown)
-BRIDGE_IMPL(sceAppUtilStoreBrowse)
-BRIDGE_IMPL(sceAppUtilSystemParamGetInt)
-BRIDGE_IMPL(sceAppUtilSystemParamGetString)

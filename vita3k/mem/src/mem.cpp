@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,19 +19,19 @@
 #include <mem/state.h>
 
 #include <util/align.h>
-#include <util/float_to_half.h>
 #include <util/log.h>
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
 #include <cstring>
+#include <mutex>
+#include <utility>
 
-#ifdef WIN32
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #else
-#include <signal.h>
+#include <csignal>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -43,12 +43,12 @@ constexpr bool PAGE_NAME_TRACKING = false;
 
 // TODO: support multiple handlers
 static AccessViolationHandler access_violation_handler;
-static void register_access_violation_handler(AccessViolationHandler handler);
+static void register_access_violation_handler(const AccessViolationHandler &handler);
 
-static Address alloc_inner(MemState &state, uint32_t start_page, int page_count, const char *name, const bool force);
+static Address alloc_inner(MemState &state, uint32_t start_page, uint32_t page_count, const char *name, const bool force);
 static void delete_memory(uint8_t *memory);
 
-#ifdef WIN32
+#ifdef _WIN32
 static std::string get_error_msg() {
     return std::system_category().message(GetLastError());
 }
@@ -59,7 +59,7 @@ static std::string get_error_msg() {
 #endif
 
 bool init(MemState &state, const bool use_page_table) {
-#ifdef WIN32
+#ifdef _WIN32
     SYSTEM_INFO system_info = {};
     GetSystemInfo(&system_info);
     state.page_size = system_info.dwPageSize;
@@ -73,7 +73,7 @@ bool init(MemState &state, const bool use_page_table) {
 
     void *preferred_address = reinterpret_cast<void *>(1ULL << 34);
 
-#ifdef WIN32
+#ifdef _WIN32
     state.memory = Memory(static_cast<uint8_t *>(VirtualAlloc(preferred_address, TOTAL_MEM_SIZE, MEM_RESERVE, PAGE_NOACCESS)), delete_memory);
     if (!state.memory) {
         // fallback
@@ -111,7 +111,7 @@ bool init(MemState &state, const bool use_page_table) {
 
     const Address null_address = alloc_inner(state, 0, 1, "null", true);
     assert(null_address == 0);
-#ifdef WIN32
+#ifdef _WIN32
     DWORD old_protect = 0;
     const BOOL ret = VirtualProtect(state.memory.get(), state.page_size, PAGE_NOACCESS, &old_protect);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
@@ -132,7 +132,7 @@ bool init(MemState &state, const bool use_page_table) {
 
 static void delete_memory(uint8_t *memory) {
     if (memory != nullptr) {
-#ifdef WIN32
+#ifdef _WIN32
         const BOOL ret = VirtualFree(memory, 0, MEM_RELEASE);
         assert(ret);
 #else
@@ -152,7 +152,7 @@ bool is_valid_addr_range(const MemState &state, Address start, Address end) {
     return state.allocator.free_slot_count(start_page, end_page) == 0;
 }
 
-static Address alloc_inner(MemState &state, uint32_t start_page, int page_count, const char *name, const bool force) {
+static Address alloc_inner(MemState &state, uint32_t start_page, uint32_t page_count, const char *name, const bool force) {
     int page_num;
     if (force) {
         if (state.allocator.allocate_at(start_page, page_count) < 0) {
@@ -165,12 +165,12 @@ static Address alloc_inner(MemState &state, uint32_t start_page, int page_count,
             return 0;
     }
 
-    const int size = page_count * state.page_size;
+    const uint32_t size = page_count * state.page_size;
     const Address addr = page_num * state.page_size;
     uint8_t *const memory = &state.memory[addr];
 
-    // Make memory chunck available to access
-#ifdef WIN32
+    // Make memory chunk available to access
+#ifdef _WIN32
     const void *const ret = VirtualAlloc(memory, size, MEM_COMMIT, PAGE_READWRITE);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
 #else
@@ -191,13 +191,13 @@ static Address alloc_inner(MemState &state, uint32_t start_page, int page_count,
     return addr;
 }
 
-Address alloc(MemState &state, uint32_t size, const char *name, unsigned int alignment) {
+Address alloc_aligned(MemState &state, uint32_t size, const char *name, unsigned int alignment, Address start_addr) {
     if (alignment == 0)
-        return alloc(state, size, name);
+        return alloc(state, size, name, start_addr);
     const std::lock_guard<std::mutex> lock(state.generation_mutex);
     size += alignment;
     const uint32_t page_count = align(size, state.page_size) / state.page_size;
-    const Address addr = alloc_inner(state, 0, page_count, name, false);
+    const Address addr = alloc_inner(state, start_addr / state.page_size, page_count, name, false);
     const Address align_addr = align(addr, alignment);
     const uint32_t page_num = addr / state.page_size;
     const uint32_t align_page_num = align_addr / state.page_size;
@@ -227,7 +227,7 @@ void unprotect_inner(MemState &state, Address addr, uint32_t size) {
     }
     uint8_t *addr_ptr = state.use_page_table ? state.page_table[addr / KiB(4)] : state.memory.get();
 
-#ifdef WIN32
+#ifdef _WIN32
     DWORD old_protect = 0;
     const BOOL ret = VirtualProtect(&addr_ptr[addr], size - 1, PAGE_READWRITE, &old_protect);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
@@ -240,7 +240,7 @@ void unprotect_inner(MemState &state, Address addr, uint32_t size) {
 void protect_inner(MemState &state, Address addr, uint32_t size, const MemPerm perm) {
     uint8_t *addr_ptr = state.use_page_table ? state.page_table[addr / KiB(4)] : state.memory.get();
 
-#ifdef WIN32
+#ifdef _WIN32
     DWORD old_protect = 0;
     const BOOL ret = VirtualProtect(&addr_ptr[addr], size - 1, (perm == MemPerm::None) ? PAGE_NOACCESS : ((perm == MemPerm::ReadOnly) ? PAGE_READONLY : PAGE_READWRITE), &old_protect);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
@@ -305,11 +305,11 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
 
             ite = info.blocks.erase(ite);
         } else {
-            ite++;
+            ++ite;
         }
     }
 
-    if (info.blocks.size() == 0 && info.ref_count == 0) {
+    if (info.blocks.empty() && info.ref_count == 0) {
         unprotect_inner(state, it->first, info.size);
         state.protect_tree.erase(it);
     } else {
@@ -333,7 +333,7 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
     return true;
 }
 
-bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPerm perm, ProtectCallback callback) {
+bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPerm perm, const ProtectCallback &callback) {
     const std::lock_guard<std::mutex> lock(state.protect_mutex);
     ProtectSegmentInfo protect(size, perm);
     align_to_page(state, addr, protect.size);
@@ -349,7 +349,7 @@ bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPe
         if (it == state.protect_tree.begin())
             it = state.protect_tree.end();
         else
-            it--;
+            --it;
     }
 
     while (it != state.protect_tree.end() && it->first < addr + size) {
@@ -415,7 +415,7 @@ void close_access_parent_protect_segment(MemState &state, Address addr) {
         }
 
         if (info.ref_count == 0) {
-            if (info.blocks.size() == 0 || info.size == 0) {
+            if (info.blocks.empty() || info.size == 0) {
                 state.protect_tree.erase(ite);
             } else {
                 protect_inner(state, ite->first, info.size, info.perm);
@@ -466,7 +466,7 @@ void remove_external_mapping(MemState &mem, uint8_t *addr_ptr) {
             if (prot_it == mem.protect_tree.begin())
                 prot_it = mem.protect_tree.end();
             else
-                prot_it--;
+                --prot_it;
         }
 
         while (prot_it != mem.protect_tree.end() && prot_it->first < mapping.address + mapping.size) {
@@ -490,10 +490,10 @@ void remove_external_mapping(MemState &mem, uint8_t *addr_ptr) {
     }
 }
 
-Address alloc(MemState &state, uint32_t size, const char *name) {
+Address alloc(MemState &state, uint32_t size, const char *name, Address start_addr) {
     const std::lock_guard<std::mutex> lock(state.generation_mutex);
     const uint32_t page_count = align(size, state.page_size) / state.page_size;
-    const Address addr = alloc_inner(state, 0, page_count, name, false);
+    const Address addr = alloc_inner(state, start_addr / state.page_size, page_count, name, false);
     return addr;
 }
 
@@ -517,8 +517,8 @@ Address try_alloc_at(MemState &state, Address address, uint32_t size, const char
     return address;
 }
 
-Block alloc_block(MemState &mem, uint32_t size, const char *name) {
-    const Address address = alloc(mem, size, name);
+Block alloc_block(MemState &mem, uint32_t size, const char *name, Address start_addr) {
+    const Address address = alloc(mem, size, name, start_addr);
     return Block(address, [&mem](Address stack) {
         free(mem, stack);
     });
@@ -543,7 +543,7 @@ void free(MemState &state, Address address) {
     assert(!state.use_page_table || state.page_table[address / KiB(4)] == state.memory.get());
     uint8_t *const memory = &state.memory[page_num * state.page_size];
 
-#ifdef WIN32
+#ifdef _WIN32
     const BOOL ret = VirtualFree(memory, page.size * state.page_size, MEM_DECOMMIT);
     LOG_CRITICAL_IF(!ret, "VirtualFree failed: {}", get_error_msg());
 #else
@@ -565,7 +565,7 @@ const char *mem_name(Address address, MemState &state) {
     return "";
 }
 
-#ifdef WIN32
+#ifdef _WIN32
 
 static LONG WINAPI exception_handler(PEXCEPTION_POINTERS pExp) noexcept {
     if (pExp->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT && IsDebuggerPresent()) {
@@ -584,9 +584,9 @@ static LONG WINAPI exception_handler(PEXCEPTION_POINTERS pExp) noexcept {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-static void register_access_violation_handler(AccessViolationHandler handler) {
+static void register_access_violation_handler(const AccessViolationHandler &handler) {
     access_violation_handler = handler;
-    if (!AddVectoredExceptionHandler(1, (PVECTORED_EXCEPTION_HANDLER)exception_handler)) {
+    if (!AddVectoredExceptionHandler(1, exception_handler)) {
         LOG_CRITICAL("Failed to register an exception handler");
     }
 }
@@ -639,7 +639,7 @@ static void signal_handler(int sig, siginfo_t *info, void *uct) noexcept {
     return;
 }
 
-static void register_access_violation_handler(AccessViolationHandler handler) {
+static void register_access_violation_handler(const AccessViolationHandler &handler) {
     access_violation_handler = handler;
     struct sigaction sa;
     sa.sa_flags = SA_SIGINFO;

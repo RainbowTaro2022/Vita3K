@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,30 +18,6 @@
 #pragma once
 
 #include <module/module.h>
-#include <modules/module_parent.h>
 
-// TODO use macro
-EXPORT(SceUID, sceKernelFindMemBlockByAddr, Address addr, uint32_t size);
-EXPORT(int, sceKernelFreeMemBlock, SceUID uid);
-
-LIBRARY_INIT_DECL(SceSysmem)
-BRIDGE_DECL(sceKernelAllocMemBlock)
-BRIDGE_DECL(sceKernelAllocMemBlockForVM)
-BRIDGE_DECL(sceKernelAllocUnmapMemBlock)
-BRIDGE_DECL(sceKernelCheckModelCapability)
-BRIDGE_DECL(sceKernelCloseMemBlock)
-BRIDGE_DECL(sceKernelCloseVMDomain)
-BRIDGE_DECL(sceKernelFindMemBlockByAddr)
-BRIDGE_DECL(sceKernelFreeMemBlock)
-BRIDGE_DECL(sceKernelFreeMemBlockForVM)
-BRIDGE_DECL(sceKernelGetFreeMemorySize)
-BRIDGE_DECL(sceKernelGetMemBlockBase)
-BRIDGE_DECL(sceKernelGetMemBlockInfoByAddr)
-BRIDGE_DECL(sceKernelGetMemBlockInfoByRange)
-BRIDGE_DECL(sceKernelGetModel)
-BRIDGE_DECL(sceKernelGetModelForCDialog)
-BRIDGE_DECL(sceKernelGetSubbudgetInfo)
-BRIDGE_DECL(sceKernelIsPSVitaTV)
-BRIDGE_DECL(sceKernelOpenMemBlock)
-BRIDGE_DECL(sceKernelOpenVMDomain)
-BRIDGE_DECL(sceKernelSyncVMDomain)
+DECL_EXPORT(SceUID, sceKernelFindMemBlockByAddr, Address addr, uint32_t size);
+DECL_EXPORT(int, sceKernelFreeMemBlock, SceUID uid);

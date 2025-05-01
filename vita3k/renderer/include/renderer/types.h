@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,36 +17,26 @@
 
 #pragma once
 
-#include <crypto/hash.h>
-#include <glutil/object.h>
-#include <glutil/object_array.h>
 #include <gxm/types.h>
 #include <renderer/commands.h>
 #include <renderer/gxm_types.h>
 #include <shader/spirv_recompiler.h>
 #include <shader/usse_program_analyzer.h>
+#include <util/hash.h>
 
 #include <array>
-#include <bit>
 #include <bitset>
 #include <map>
-#include <string>
-#include <thread>
-#include <tuple>
 #include <vector>
 
 static constexpr auto DEFAULT_RES_WIDTH = 960;
 static constexpr auto DEFAULT_RES_HEIGHT = 544;
 
 struct SceGxmProgram;
-struct SDL_Window;
 
 using UniformBufferSizes = std::array<std::uint32_t, 15>;
 
 namespace renderer {
-
-typedef std::tuple<Sha256Hash, Sha256Hash> ProgramHashes;
-typedef std::vector<std::string> ExcludedUniforms; // vector instead of unordered_set since it's much faster for few elements
 
 // State types
 typedef std::map<Sha256Hash, const SceGxmProgram *> GXPPtrMap;
@@ -55,8 +45,6 @@ struct UniformSetRequest {
     const SceGxmProgramParameter *parameter;
     const void *data;
 };
-
-struct CommandBuffer;
 
 enum class Backend : uint32_t {
     OpenGL,
@@ -92,7 +80,7 @@ struct GXMStreamInfo {
     size_t size = 0;
 };
 
-// We seperate the following two parts of the stencil state because the first is part of the pipeline creation
+// We separate the following two parts of the stencil state because the first is part of the pipeline creation
 // while the second is dynamic
 struct GxmStencilStateOp {
     SceGxmStencilFunc func = SCE_GXM_STENCIL_FUNC_ALWAYS;
@@ -135,12 +123,14 @@ struct GxmRecordState {
     bool is_maskupdate = false;
     bool is_gamma_corrected = false;
 
+    uint8_t _padding[6] = {};
+
     // Do not put any state not used for the Vulkan pipeline creation before vertex_streams
     std::array<GXMStreamInfo, SCE_GXM_MAX_VERTEX_STREAMS> vertex_streams;
 
     // Programs.
-    Ptr<const SceGxmFragmentProgram> fragment_program;
-    Ptr<const SceGxmVertexProgram> vertex_program;
+    Ptr<SceGxmFragmentProgram> fragment_program;
+    Ptr<SceGxmVertexProgram> vertex_program;
 
     SceGxmColorSurface color_surface;
     SceGxmDepthStencilSurface depth_stencil_surface;
@@ -165,7 +155,7 @@ struct GxmRecordState {
 };
 
 struct Context {
-    const RenderTarget *current_render_target{};
+    RenderTarget *current_render_target{};
     GxmRecordState record;
 
     CommandList command_list;
@@ -191,8 +181,9 @@ struct ShaderProgram {
     Sha256Hash hash;
     UniformBufferSizes uniform_buffer_sizes; // Size of the buffer in 4-bytes unit
     UniformBufferSizes uniform_buffer_data_offsets; // Offset of the buffer in 4-bytes unit
+    size_t max_total_uniform_buffer_storage;
+    uint16_t buffer_count; // max buffer index used by the shader + 1
 
-    std::size_t max_total_uniform_buffer_storage;
     uint16_t texture_count; // max texture index used by the shader + 1
     TextureInfo textures_used; // textures_used[i] is true if and only if the i-th texture is used by the shader
 };
@@ -202,8 +193,6 @@ struct FragmentProgram : ShaderProgram {
 
 struct VertexProgram : ShaderProgram {
     shader::usse::AttributeInformationMap attribute_infos;
-
-    bool stripped_symbols_checked;
 };
 
 struct ShadersHash {

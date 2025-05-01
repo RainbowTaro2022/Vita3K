@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -23,9 +23,6 @@ struct Config;
 struct EmuEnvState;
 struct SDL_Window;
 struct ImGui_State;
-struct CPUDepInject;
-template <class T>
-class Ptr;
 class Root;
 
 namespace app {
@@ -38,7 +35,9 @@ enum class AppRunType {
     Extracted,
 };
 
+void init_paths(Root &root_paths);
 bool init(EmuEnvState &state, Config &cfg, const Root &root_paths);
+bool late_init(EmuEnvState &state);
 void destroy(EmuEnvState &emuenv, ImGui_State *imgui);
 void update_viewport(EmuEnvState &state);
 void switch_state(EmuEnvState &emuenv, const bool pause);

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNpWebApiCommonDialog.h"
+#include <module/module.h>
 
 EXPORT(int, sceGameCustomDataDialogAbort) {
     return UNIMPLEMENTED();
@@ -56,14 +56,3 @@ EXPORT(int, sceInvitationDialogInit) {
 EXPORT(int, sceInvitationDialogTerm) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceGameCustomDataDialogAbort)
-BRIDGE_IMPL(sceGameCustomDataDialogGetResult)
-BRIDGE_IMPL(sceGameCustomDataDialogGetStatus)
-BRIDGE_IMPL(sceGameCustomDataDialogInit)
-BRIDGE_IMPL(sceGameCustomDataDialogTerm)
-BRIDGE_IMPL(sceInvitationDialogAbort)
-BRIDGE_IMPL(sceInvitationDialogGetResult)
-BRIDGE_IMPL(sceInvitationDialogGetStatus)
-BRIDGE_IMPL(sceInvitationDialogInit)
-BRIDGE_IMPL(sceInvitationDialogTerm)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,27 +22,9 @@
 struct SceRtcTick;
 struct SceDateTime;
 
-EXPORT(int, _sceRtcConvertLocalTimeToUtc, const SceRtcTick *pLocalTime, SceRtcTick *pUtc);
-EXPORT(int, _sceRtcConvertUtcToLocalTime, const SceRtcTick *pUtc, SceRtcTick *pLocalTime);
-EXPORT(int, _sceRtcGetCurrentClock, SceDateTime *datePtr, int iTimeZone);
-EXPORT(int, _sceRtcGetCurrentClockLocalTime, SceDateTime *datePtr);
-EXPORT(int, _sceRtcGetCurrentNetworkTick, SceRtcTick *tick);
-EXPORT(int, _sceRtcGetCurrentTick, SceRtcTick *tick);
-
-BRIDGE_DECL(_sceRtcConvertLocalTimeToUtc)
-BRIDGE_DECL(_sceRtcConvertUtcToLocalTime)
-BRIDGE_DECL(_sceRtcFormatRFC2822)
-BRIDGE_DECL(_sceRtcFormatRFC2822LocalTime)
-BRIDGE_DECL(_sceRtcFormatRFC3339)
-BRIDGE_DECL(_sceRtcFormatRFC3339LocalTime)
-BRIDGE_DECL(_sceRtcGetCurrentAdNetworkTick)
-BRIDGE_DECL(_sceRtcGetCurrentClock)
-BRIDGE_DECL(_sceRtcGetCurrentClockLocalTime)
-BRIDGE_DECL(_sceRtcGetCurrentDebugNetworkTick)
-BRIDGE_DECL(_sceRtcGetCurrentGpsTick)
-BRIDGE_DECL(_sceRtcGetCurrentNetworkTick)
-BRIDGE_DECL(_sceRtcGetCurrentRetainedNetworkTick)
-BRIDGE_DECL(_sceRtcGetCurrentTick)
-BRIDGE_DECL(_sceRtcGetLastAdjustedTick)
-BRIDGE_DECL(_sceRtcGetLastReincarnatedTick)
-BRIDGE_DECL(sceRtcGetAccumulativeTime)
+DECL_EXPORT(int, _sceRtcConvertLocalTimeToUtc, const SceRtcTick *pLocalTime, SceRtcTick *pUtc);
+DECL_EXPORT(int, _sceRtcConvertUtcToLocalTime, const SceRtcTick *pUtc, SceRtcTick *pLocalTime);
+DECL_EXPORT(int, _sceRtcGetCurrentClock, SceDateTime *datePtr, int iTimeZone);
+DECL_EXPORT(int, _sceRtcGetCurrentClockLocalTime, SceDateTime *datePtr);
+DECL_EXPORT(int, _sceRtcGetCurrentNetworkTick, SceRtcTick *tick);
+DECL_EXPORT(int, _sceRtcGetCurrentTick, SceRtcTick *tick);

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceProcessmgrForDriver.h"
+#include <module/module.h>
 
 EXPORT(int, ksceKernelCreateProcessLocalStorage) {
     return UNIMPLEMENTED();
@@ -60,15 +60,3 @@ EXPORT(int, ksceKernelIsCDialogAvailable) {
 EXPORT(int, ksceKernelIsGameBudget) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(ksceKernelCreateProcessLocalStorage)
-BRIDGE_IMPL(ksceKernelGetProcessInfo)
-BRIDGE_IMPL(ksceKernelGetProcessLocalStorageAddr)
-BRIDGE_IMPL(ksceKernelGetProcessLocalStorageAddrForPid)
-BRIDGE_IMPL(ksceKernelGetProcessStatus)
-BRIDGE_IMPL(ksceKernelGetProcessTimeCore)
-BRIDGE_IMPL(ksceKernelGetProcessTimeLowCore)
-BRIDGE_IMPL(ksceKernelGetProcessTimeWideCore)
-BRIDGE_IMPL(ksceKernelGetRemoteProcessTime)
-BRIDGE_IMPL(ksceKernelIsCDialogAvailable)
-BRIDGE_IMPL(ksceKernelIsGameBudget)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ using namespace shader::usse;
 
 namespace shader::usse::disasm {
 
-std::string *disasm_storage = nullptr;
+thread_local std::stringstream *disasm_storage = nullptr;
 
 //
 // Disasm helpers
@@ -177,20 +177,20 @@ std::string reg_to_str(RegisterBank bank, uint32_t reg_num) {
 std::string operand_to_str(const Operand &op, Imm4 write_mask, int32_t shift) {
     std::string opstr = reg_to_str(op.bank, op.num + shift);
 
-    if (op.bank == RegisterBank::IMMEDIATE) {
-        return opstr;
-    }
-
-    if (write_mask != 0) {
-        opstr += "." + swizzle_to_str<4>(op.swizzle, write_mask);
-    }
-
     if (op.flags & RegisterFlags::Negative) {
         opstr = "-" + opstr;
     }
 
     if (op.flags & RegisterFlags::Absolute) {
         opstr = "abs(" + opstr + ")";
+    }
+
+    if (op.bank == RegisterBank::IMMEDIATE) {
+        return opstr;
+    }
+
+    if (write_mask != 0) {
+        opstr += "." + swizzle_to_str<4>(op.swizzle, write_mask);
     }
 
     return opstr;

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,11 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNpBasic.h"
+#include <module/module.h>
+
+enum SceNpBasicError : uint32_t {
+    SCE_NP_BASIC_ERROR_INVALID_ARGUMENT = 0x80551d02,
+};
 
 EXPORT(int, sceNpBasicCheckCallback) {
     return UNIMPLEMENTED();
@@ -41,8 +45,13 @@ EXPORT(int, sceNpBasicGetFriendListEntries) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceNpBasicGetFriendListEntryCount) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceNpBasicGetFriendListEntryCount, int *nb_friends) {
+    if (!nb_friends)
+        return RET_ERROR(SCE_NP_BASIC_ERROR_INVALID_ARGUMENT);
+
+    STUBBED("No friends");
+    *nb_friends = 0;
+    return 0;
 }
 
 EXPORT(int, sceNpBasicGetFriendOnlineStatus) {
@@ -132,33 +141,3 @@ EXPORT(int, sceNpBasicUnregisterJoinGameAckHandler) {
 EXPORT(int, sceNpBasicUnsetInGamePresence) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceNpBasicCheckCallback)
-BRIDGE_IMPL(sceNpBasicCheckIfPlayerIsBlocked)
-BRIDGE_IMPL(sceNpBasicGetBlockListEntries)
-BRIDGE_IMPL(sceNpBasicGetBlockListEntryCount)
-BRIDGE_IMPL(sceNpBasicGetFriendContextState)
-BRIDGE_IMPL(sceNpBasicGetFriendListEntries)
-BRIDGE_IMPL(sceNpBasicGetFriendListEntryCount)
-BRIDGE_IMPL(sceNpBasicGetFriendOnlineStatus)
-BRIDGE_IMPL(sceNpBasicGetFriendRequestEntries)
-BRIDGE_IMPL(sceNpBasicGetFriendRequestEntryCount)
-BRIDGE_IMPL(sceNpBasicGetGameJoiningPresence)
-BRIDGE_IMPL(sceNpBasicGetGamePresenceOfFriend)
-BRIDGE_IMPL(sceNpBasicGetPlaySessionLog)
-BRIDGE_IMPL(sceNpBasicGetPlaySessionLogSize)
-BRIDGE_IMPL(sceNpBasicGetRequestedFriendRequestEntries)
-BRIDGE_IMPL(sceNpBasicGetRequestedFriendRequestEntryCount)
-BRIDGE_IMPL(sceNpBasicInit)
-BRIDGE_IMPL(sceNpBasicJoinGameAckResponseSend)
-BRIDGE_IMPL(sceNpBasicRecordPlaySessionLog)
-BRIDGE_IMPL(sceNpBasicRegisterHandler)
-BRIDGE_IMPL(sceNpBasicRegisterInGameDataMessageHandler)
-BRIDGE_IMPL(sceNpBasicRegisterJoinGameAckHandler)
-BRIDGE_IMPL(sceNpBasicSendInGameDataMessage)
-BRIDGE_IMPL(sceNpBasicSetInGamePresence)
-BRIDGE_IMPL(sceNpBasicTerm)
-BRIDGE_IMPL(sceNpBasicUnregisterHandler)
-BRIDGE_IMPL(sceNpBasicUnregisterInGameDataMessageHandler)
-BRIDGE_IMPL(sceNpBasicUnregisterJoinGameAckHandler)
-BRIDGE_IMPL(sceNpBasicUnsetInGamePresence)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,10 +17,9 @@
 
 #pragma once
 
-#include <renderer/texture_cache_state.h>
+#include <renderer/texture_cache.h>
 #include <renderer/types.h>
-
-#include <threads/queue.h>
+#include <shader/uniform_block.h>
 #include <vkutil/objects.h>
 
 struct MemState;
@@ -48,7 +47,7 @@ struct TextureCacheEntry {
     uint32_t memory_needed;
 };
 
-struct VKTextureCacheState : public renderer::TextureCacheState {
+struct VKTextureCache : public TextureCache {
     VKState &state;
 
     TextureStagingBuffer staging_buffers[NB_TEXTURE_STAGING_BUFFERS];
@@ -57,27 +56,54 @@ struct VKTextureCacheState : public renderer::TextureCacheState {
     uint64_t current_scene_timestamp;
 
     std::array<TextureCacheEntry, TextureCacheSize> textures;
+    std::vector<vk::Sampler> samplers;
 
     TextureCacheEntry *current_texture = nullptr;
     const SceGxmTexture *gxm_texture = nullptr;
     vk::CommandBuffer cmd_buffer = nullptr;
     bool is_texture_transfer_ready = false;
 
-    VKTextureCacheState(VKState &state);
+    VKTextureCache(VKState &state);
     // get an available staging buffer, wait for one if all are busy
     void prepare_staging_buffer(bool is_configure = false);
+
+    bool init(const bool hashless_texture_cache, const fs::path &texture_folder, const std::string_view game_id);
+    void select(size_t index, const SceGxmTexture &texture) override;
+    void configure_texture(const SceGxmTexture &texture) override;
+    void upload_texture_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, uint32_t pixels_per_stride) override;
+    void upload_done() override;
+
+    void configure_sampler(size_t index, const SceGxmTexture &texture) override;
+
+    void import_configure_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, bool is_srgb, uint16_t nb_components, uint16_t mipcount, bool swap_rb) override;
+
+    vk::Sampler get_retrieved_sampler() const {
+        return samplers[last_bound_sampler_index];
+    }
+};
+
+struct FrameDescriptor {
+    std::vector<vk::DescriptorSet> sets;
+    int descriptors_idx = 0;
 };
 
 struct FrameObject {
     vk::CommandPool render_pool;
-    // we need to have a specif prerender pool because prerender command buffer
+    // we need to have a specific prerender pool because prerender command buffer
     // can be reset if we use too many new textures at once
     vk::CommandPool prerender_pool;
-    vk::DescriptorPool descriptor_pool;
 
     std::vector<vk::Fence> rendered_fences;
     // equals to context.frame_timestamp when the frame object is used
     uint64_t frame_timestamp;
+
+    // there are at most 16 different textures for a given stage
+    // stage_descriptor[i] is the descriptor when using (i+1) textures
+    FrameDescriptor vert_descriptors[16];
+    FrameDescriptor frag_descriptors[16];
+
+    // descriptor for the color surface
+    FrameDescriptor color_descriptor;
 
     // destroy gpu objects MAX_FRAMES_RENDERING frames later to make sure they are no longer being used
     vkutil::DestroyQueue destroy_queue;
@@ -108,24 +134,46 @@ struct VisibilityBuffer {
     std::vector<bool> queries_used; // the queries that were used in the current scene
 };
 
-// request to trigger a notification after the fence has been waited for
+struct FenceWaitRequest {
+    vk::Fence fence;
+};
+
+// request to trigger a notification after the previous fences have been waited for
 struct NotificationRequest {
     SceGxmNotification notifications[2];
-    vk::Fence fence;
 };
 
 struct FrameDoneRequest {
     uint64_t frame_timestamp;
 };
 
+struct SyncSignalRequest {
+    SceGxmSyncObject *sync;
+    uint32_t timestamp;
+};
+
 struct PostSurfaceSyncRequest {
     ColorSurfaceCacheInfo *cache_info;
+};
+
+using CallbackRequestFunction = std::function<void()>;
+struct CallbackRequest {
+    // use a pointer so the size is similar to other elements of WaitThreadRequest
+    // and not to have to mess with move semantics
+    CallbackRequestFunction *callback;
 };
 
 // A parallel thread is handling these request and telling other waiting threads
 // when they are done
 // only used if memory mapping is enabled
-typedef std::variant<NotificationRequest, FrameDoneRequest, PostSurfaceSyncRequest> WaitThreadRequest;
+typedef std::variant<
+    FenceWaitRequest,
+    NotificationRequest,
+    FrameDoneRequest,
+    PostSurfaceSyncRequest,
+    SyncSignalRequest,
+    CallbackRequest>
+    WaitThreadRequest;
 
 struct VKContext : public renderer::Context {
     // GXM Context Info
@@ -133,9 +181,6 @@ struct VKContext : public renderer::Context {
 
     MemState &mem;
 
-    std::array<FrameObject, MAX_FRAMES_RENDERING> frames;
-    // start at 1 because last_frame_waited is set to 0
-    int current_frame_idx = 1;
     uint64_t frame_timestamp = 1;
     uint64_t scene_timestamp = 1;
     std::vector<vk::CommandBuffer> cmdbuffers_to_submit = {};
@@ -156,11 +201,14 @@ struct VKContext : public renderer::Context {
     vk::Buffer vertex_stream_buffers[SCE_GXM_MAX_VERTEX_STREAMS];
     vk::DeviceSize vertex_stream_offsets[SCE_GXM_MAX_VERTEX_STREAMS] = {};
 
-    shader::RenderVertUniformBlockWithMapping previous_vert_info;
-    shader::RenderFragUniformBlockWithMapping previous_frag_info;
+    shader::RenderVertUniformBlock prev_vert_ublock;
+    shader::RenderFragUniformBlock prev_frag_ublock;
 
-    shader::RenderVertUniformBlockWithMapping current_vert_render_info;
-    shader::RenderFragUniformBlockWithMapping current_frag_render_info;
+    shader::RenderVertUniformBlockExtended curr_vert_ublock;
+    shader::RenderFragUniformBlockExtended curr_frag_ublock;
+
+    // scratch memory to contain the constructed render info uniform before copying it
+    uint8_t shader_info_temp[std::max(shader::RenderVertUniformBlockExtended::get_max_size(), shader::RenderFragUniformBlockExtended::get_max_size())];
 
     // used to implement the Visibility Buffer
     std::map<Address, VisibilityBuffer> visibility_buffers;
@@ -174,6 +222,8 @@ struct VKContext : public renderer::Context {
     vk::DescriptorPool global_descriptor_pool;
     // we will use this descriptor set for all the draws
     vk::DescriptorSet global_set;
+    // descriptor set when using 0 textures
+    vk::DescriptorSet empty_set;
 
     // descriptor set used to store the mask and the color attachment
     vk::DescriptorSet rendertarget_set;
@@ -194,9 +244,11 @@ struct VKContext : public renderer::Context {
 
     vk::Framebuffer current_framebuffer;
     vk::Framebuffer current_shader_interlock_framebuffer = nullptr;
-    uint16_t current_framebuffer_height;
-    vkutil::Image *current_color_attachment;
-    vkutil::Image *current_ds_attachment;
+    // we need the format or image for some cases
+    vkutil::Image *current_color_base_image;
+    vk::Format current_color_format;
+    vk::ImageView current_color_view;
+    vk::ImageView current_ds_view;
 
     bool is_recording = false;
     bool in_renderpass = false;
@@ -213,6 +265,8 @@ struct VKContext : public renderer::Context {
     // used for macroblock sync emulation
     uint16_t last_macroblock_x = ~0;
     uint16_t last_macroblock_y = ~0;
+    // special case where we can't determine the current macroblock
+    bool ignore_macroblock = false;
 
     // used if necessary to restart easily the render pass
     vk::RenderPassBeginInfo curr_renderpass_info;
@@ -222,18 +276,12 @@ struct VKContext : public renderer::Context {
     // only used if memory mapping is enabled
     std::mutex new_frame_mutex;
     std::condition_variable new_frame_condv;
-    // queue were new notification and frame done request are added
-    Queue<WaitThreadRequest> request_queue;
     std::thread gpu_request_wait_thread;
     uint64_t last_frame_waited = 0;
 
-    inline FrameObject &frame() {
-        return frames[current_frame_idx];
-    }
-
     explicit VKContext(VKState &state, MemState &mem);
     // TODO: properly destroy the context
-    ~VKContext() override = default;
+    ~VKContext() override;
 
     void start_recording();
     void start_render_pass(bool create_descriptor_set = true);
@@ -241,7 +289,7 @@ struct VKContext : public renderer::Context {
     void stop_recording(const SceGxmNotification &notif1, const SceGxmNotification &notif2, bool submit = true);
 
     // check (when the render target has macroblock set) if we are drawing to another block
-    void check_for_macroblock_change();
+    void check_for_macroblock_change(bool is_draw);
 
 private:
     void wait_thread_function(const MemState &mem);
@@ -250,7 +298,6 @@ private:
 struct VKRenderTarget : public renderer::RenderTarget {
     uint16_t width;
     uint16_t height;
-    vkutil::Image mask;
     vkutil::Image color;
     vkutil::Image depthstencil;
 

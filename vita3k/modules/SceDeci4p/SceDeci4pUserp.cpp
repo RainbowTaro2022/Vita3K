@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDeci4pUserp.h"
+#include <module/module.h>
 
 EXPORT(int, sceKernelDeci4pClose) {
     return UNIMPLEMENTED();
@@ -56,14 +56,3 @@ EXPORT(int, sceKernelDeci4pRegisterCallback) {
 EXPORT(int, sceKernelDeci4pWrite) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceKernelDeci4pClose)
-BRIDGE_IMPL(sceKernelDeci4pCreateHostProcess)
-BRIDGE_IMPL(sceKernelDeci4pCreateHostProcessAndWait)
-BRIDGE_IMPL(sceKernelDeci4pDisableWatchpoint)
-BRIDGE_IMPL(sceKernelDeci4pEnableWatchpoint)
-BRIDGE_IMPL(sceKernelDeci4pIsProcessAttached)
-BRIDGE_IMPL(sceKernelDeci4pOpen)
-BRIDGE_IMPL(sceKernelDeci4pRead)
-BRIDGE_IMPL(sceKernelDeci4pRegisterCallback)
-BRIDGE_IMPL(sceKernelDeci4pWrite)

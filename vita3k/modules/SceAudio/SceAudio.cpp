@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceAudio.h"
+#include <module/module.h>
 
 #include <audio/state.h>
 #include <kernel/state.h>
@@ -23,6 +23,53 @@
 #include <util/tracy.h>
 
 TRACY_MODULE_NAME(SceAudio);
+
+enum SceAudioOutMode {
+    SCE_AUDIO_OUT_MODE_MONO = 0,
+    SCE_AUDIO_OUT_MODE_STEREO = 1
+};
+
+enum SceAudioOutAlcMode {
+    SCE_AUDIO_ALC_OFF,
+    SCE_AUDIO_ALC_MODE1,
+    SCE_AUDIO_ALC_MODE_MAX
+};
+
+enum SceAudioOutPortType {
+    //! Used for main audio output, freq must be set to 48000 Hz
+    SCE_AUDIO_OUT_PORT_TYPE_MAIN = 0,
+    //! Used for Background Music port
+    SCE_AUDIO_OUT_PORT_TYPE_BGM = 1,
+    //! Used for voice chat port
+    SCE_AUDIO_OUT_PORT_TYPE_VOICE = 2
+};
+
+enum SceAudioOutErrorCode : uint32_t {
+    SCE_AUDIO_OUT_ERROR_NOT_OPENED = 0x80260001,
+    SCE_AUDIO_OUT_ERROR_BUSY = 0x80260002,
+    SCE_AUDIO_OUT_ERROR_INVALID_PORT = 0x80260003,
+    SCE_AUDIO_OUT_ERROR_INVALID_POINTER = 0x80260004,
+    SCE_AUDIO_OUT_ERROR_PORT_FULL = 0x80260005,
+    SCE_AUDIO_OUT_ERROR_INVALID_SIZE = 0x80260006,
+    SCE_AUDIO_OUT_ERROR_INVALID_FORMAT = 0x80260007,
+    SCE_AUDIO_OUT_ERROR_INVALID_SAMPLE_FREQ = 0x80260008,
+    SCE_AUDIO_OUT_ERROR_INVALID_VOLUME = 0x80260009,
+    SCE_AUDIO_OUT_ERROR_INVALID_PORT_TYPE = 0x8026000A,
+    SCE_AUDIO_OUT_ERROR_INVALID_FX_TYPE = 0x8026000B,
+    SCE_AUDIO_OUT_ERROR_INVALID_CONF_TYPE = 0x8026000C,
+    SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY = 0x8026000D
+};
+
+enum SceAudioOutChannelFlag {
+    SCE_AUDIO_VOLUME_FLAG_L_CH = 1, //!< Left Channel
+    SCE_AUDIO_VOLUME_FLAG_R_CH = 2 //!< Right Channel
+};
+
+enum SceAudioOutConfigType {
+    SCE_AUDIO_OUT_CONFIG_TYPE_LEN,
+    SCE_AUDIO_OUT_CONFIG_TYPE_FREQ,
+    SCE_AUDIO_OUT_CONFIG_TYPE_MODE
+};
 
 template <>
 std::string to_debug_str<SceAudioOutPortType>(const MemState &mem, SceAudioOutPortType type) {
@@ -147,14 +194,14 @@ EXPORT(int, sceAudioOutOutput, int port, const void *buf) {
         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_PORT);
     }
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
     if (!thread) {
         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_PORT);
     }
 
     emuenv.audio.audio_output(*thread, *prt, buf);
 
-    return 0;
+    return prt->len;
 }
 
 EXPORT(int, sceAudioOutGetRestSample, int port) {
@@ -205,7 +252,7 @@ EXPORT(int, sceAudioOutSetCompress) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceAudioOutSetConfig, int port, SceSize len, int freq, SceAudioOutMode mode) {
+EXPORT(int, sceAudioOutSetConfig, int port, int len, int freq, int mode) {
     TRACY_FUNC(sceAudioOutSetConfig, port, len, freq, mode);
     if (len == 0)
         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_SIZE);
@@ -278,20 +325,3 @@ EXPORT(int, sceAudioOutSetVolume, int port, SceAudioOutChannelFlag ch, int *vol)
 
     return 0;
 }
-
-BRIDGE_IMPL(sceAudioOutGetAdopt)
-BRIDGE_IMPL(sceAudioOutGetConfig)
-BRIDGE_IMPL(sceAudioOutGetPortVolume_forUser)
-BRIDGE_IMPL(sceAudioOutGetRestSample)
-BRIDGE_IMPL(sceAudioOutOpenExtPort)
-BRIDGE_IMPL(sceAudioOutOpenPort)
-BRIDGE_IMPL(sceAudioOutOutput)
-BRIDGE_IMPL(sceAudioOutReleasePort)
-BRIDGE_IMPL(sceAudioOutSetAdoptMode)
-BRIDGE_IMPL(sceAudioOutSetAdopt_forUser)
-BRIDGE_IMPL(sceAudioOutSetAlcMode)
-BRIDGE_IMPL(sceAudioOutSetCompress)
-BRIDGE_IMPL(sceAudioOutSetConfig)
-BRIDGE_IMPL(sceAudioOutSetEffectType)
-BRIDGE_IMPL(sceAudioOutSetPortVolume_forUser)
-BRIDGE_IMPL(sceAudioOutSetVolume)

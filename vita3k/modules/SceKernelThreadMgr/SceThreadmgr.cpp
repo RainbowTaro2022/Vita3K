@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceThreadmgr);
 
-inline uint64_t get_current_time() {
+inline static uint64_t get_current_time() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch())
         .count();
@@ -249,9 +249,16 @@ EXPORT(int, _sceKernelGetEventInfo) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, _sceKernelGetEventPattern) {
-    TRACY_FUNC(_sceKernelGetEventPattern);
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, _sceKernelGetEventPattern, SceUID event_id, SceUInt32 *get_pattern) {
+    TRACY_FUNC(_sceKernelGetEventPattern, event_id, get_pattern);
+    const SimpleEventPtr event = lock_and_find(event_id, emuenv.kernel.simple_events, emuenv.kernel.mutex);
+    if (!event)
+        return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_EVENT_ID);
+    if (!get_pattern)
+        return RET_ERROR(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+
+    *get_pattern = event->pattern;
+    return SCE_KERNEL_OK;
 }
 
 EXPORT(int, _sceKernelGetLwCondInfo) {
@@ -427,7 +434,7 @@ EXPORT(int, _sceKernelGetThreadContextForVM, SceUID threadId, Ptr<SceKernelThrea
     TRACY_FUNC(_sceKernelGetThreadContextForVM, threadId, pCpuRegisterInfo, pVfpRegisterInfo);
     STUBBED("Stub");
 
-    const ThreadStatePtr thread = lock_and_find(threadId, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
     if (!thread)
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
 
@@ -483,7 +490,7 @@ EXPORT(SceInt32, _sceKernelGetThreadInfo, SceUID threadId, Ptr<SceKernelThreadIn
     TRACY_FUNC(_sceKernelGetThreadInfo, threadId, pInfo);
     STUBBED("STUB");
 
-    const ThreadStatePtr thread = lock_and_find(threadId ? threadId : thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId ? threadId : thread_id);
     if (!thread)
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
 
@@ -496,7 +503,7 @@ EXPORT(SceInt32, _sceKernelGetThreadInfo, SceUID threadId, Ptr<SceKernelThreadIn
 
     // TODO: SCE_KERNEL_ERROR_ILLEGAL_CONTEXT check
 
-    std::copy(thread->name.c_str(), thread->name.c_str() + KERNELOBJECT_MAX_NAME_LENGTH, info->name);
+    strncpy(info->name, thread->name.c_str(), KERNELOBJECT_MAX_NAME_LENGTH);
     info->stack = Ptr<void>(thread->stack.get());
     info->stackSize = thread->stack_size;
     info->initPriority = thread->priority; // Todo Give only current priority
@@ -648,7 +655,7 @@ EXPORT(int, _sceKernelSetEventWithNotifyCallback) {
 
 EXPORT(int, _sceKernelSetThreadContextForVM, SceUID threadId, Ptr<SceKernelThreadCpuRegisterInfo> pCpuRegisterInfo, Ptr<SceKernelThreadVfpRegisterInfo> pVfpRegisterInfo) {
     TRACY_FUNC(_sceKernelSetThreadContextForVM, threadId, pCpuRegisterInfo, pVfpRegisterInfo);
-    const ThreadStatePtr thread = lock_and_find(threadId, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
     if (!thread)
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
 
@@ -702,15 +709,14 @@ EXPORT(int, _sceKernelSignalLwCondTo) {
 
 EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) {
     TRACY_FUNC(_sceKernelStartThread, thid, arglen, argp);
-    auto thread = lock_and_find(thid, emuenv.kernel.threads, emuenv.kernel.mutex);
-    Ptr<void> new_argp(0);
+    auto thread = emuenv.kernel.get_thread(thid);
 
     if (!thread) {
-        return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
+        return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
     }
 
     if (thread->status == ThreadStatus::run) {
-        return SCE_KERNEL_ERROR_RUNNING;
+        return RET_ERROR(SCE_KERNEL_ERROR_RUNNING);
     }
 
     const int res = thread->start(arglen, argp, true);
@@ -815,7 +821,7 @@ EXPORT(SceInt32, _sceKernelWaitSemaCB, SceUID semaId, SceInt32 needCount, SceUIn
 EXPORT(int, _sceKernelWaitSignal, uint32_t unknown, uint32_t delay, uint32_t timeout) {
     TRACY_FUNC(_sceKernelWaitSignal, unknown, delay, timeout);
     STUBBED("sceKernelWaitSignal");
-    const auto thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const auto thread = emuenv.kernel.get_thread(thread_id);
     thread->update_status(ThreadStatus::wait);
     thread->signal.wait();
     thread->update_status(ThreadStatus::run);
@@ -828,7 +834,7 @@ EXPORT(int, _sceKernelWaitSignalCB, uint32_t unknown, uint32_t delay, uint32_t t
     return CALL_EXPORT(_sceKernelWaitSignal, unknown, delay, timeout);
 }
 
-int wait_thread_end(ThreadStatePtr &waiter, ThreadStatePtr &target, int *stat) {
+static int wait_thread_end(ThreadStatePtr &waiter, ThreadStatePtr &target, int *stat) {
     std::unique_lock<std::mutex> waiter_lock(waiter->mutex);
     {
         const std::unique_lock<std::mutex> thread_lock(target->mutex);
@@ -848,8 +854,8 @@ int wait_thread_end(ThreadStatePtr &waiter, ThreadStatePtr &target, int *stat) {
 
 EXPORT(int, _sceKernelWaitThreadEnd, SceUID thid, int *stat, SceUInt *timeout) {
     TRACY_FUNC(_sceKernelWaitThreadEnd, thid, stat, timeout);
-    auto waiter = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
-    auto target = lock_and_find(thid, emuenv.kernel.threads, emuenv.kernel.mutex);
+    auto waiter = emuenv.kernel.get_thread(thread_id);
+    auto target = emuenv.kernel.get_thread(thid);
     if (!target) {
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
     }
@@ -858,8 +864,8 @@ EXPORT(int, _sceKernelWaitThreadEnd, SceUID thid, int *stat, SceUInt *timeout) {
 
 EXPORT(int, _sceKernelWaitThreadEndCB, SceUID thid, int *stat, SceUInt *timeout) {
     TRACY_FUNC(_sceKernelWaitThreadEndCB, thid, stat, timeout);
-    auto waiter = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
-    auto target = lock_and_find(thid, emuenv.kernel.threads, emuenv.kernel.mutex);
+    auto waiter = emuenv.kernel.get_thread(thread_id);
+    auto target = emuenv.kernel.get_thread(thid);
     if (!target) {
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
     }
@@ -896,6 +902,7 @@ EXPORT(SceInt32, sceKernelChangeThreadCpuAffinityMask, SceUID thid, SceInt32 aff
         return RET_ERROR(SCE_KERNEL_ERROR_ILLEGAL_CPU_AFFINITY_MASK);
 
     thread->affinity_mask = affinity_mask;
+    thread->tls.get_ptr<int>().get(emuenv.mem)[TLS_CPU_AFFINITY_MASK] = affinity_mask;
     return old_affinity;
 }
 
@@ -920,6 +927,7 @@ EXPORT(SceInt32, sceKernelChangeThreadPriority2, SceUID thid, SceInt32 priority)
         return RET_ERROR(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
 
     thread->priority = priority;
+    thread->tls.get_ptr<int>().get(emuenv.mem)[TLS_CURRENT_PRIORITY] = priority;
 
     return old_priority;
 }
@@ -935,7 +943,17 @@ EXPORT(SceInt32, sceKernelChangeThreadPriority, SceUID thid, SceInt32 priority) 
 
 EXPORT(int, sceKernelChangeThreadVfpException, SceInt32 clearMask, SceInt32 setMask) {
     TRACY_FUNC(sceKernelChangeThreadVfpException, clearMask, setMask);
-    return UNIMPLEMENTED();
+    if (((clearMask | setMask) & 0xf7ffff60) != 0 || (clearMask & setMask) != 0) {
+        return RET_ERROR(SCE_KERNEL_ERROR_INVALID_ARGUMENT);
+    }
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+    if (!thread)
+        return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
+    int &vfp_exception = thread->tls.get_ptr<int>().get(emuenv.mem)[TLS_VFP_EXCEPTION];
+    int old_exception = vfp_exception;
+    vfp_exception = setMask | (vfp_exception & ~clearMask);
+    STUBBED("");
+    return old_exception;
 }
 
 EXPORT(SceInt32, sceKernelCheckCallback) {
@@ -1030,7 +1048,7 @@ EXPORT(int, sceKernelCreateThreadForUser, const char *name, SceKernelThreadEntry
     return thread->id;
 }
 
-int delay_thread(SceUInt delay_us) {
+static int delay_thread(SceUInt delay_us) {
     if (delay_us == 0)
         return SCE_KERNEL_ERROR_INVALID_ARGUMENT;
 
@@ -1039,7 +1057,7 @@ int delay_thread(SceUInt delay_us) {
     return SCE_KERNEL_OK;
 }
 
-int delay_thread_cb(EmuEnvState &emuenv, SceUID thread_id, SceUInt delay_us) {
+static int delay_thread_cb(EmuEnvState &emuenv, SceUID thread_id, SceUInt delay_us) {
     auto start = std::chrono::high_resolution_clock::now(); // Meseaure the time taken to process callbacks
     process_callbacks(emuenv.kernel, thread_id);
     auto end = std::chrono::high_resolution_clock::now();
@@ -1085,7 +1103,7 @@ EXPORT(int, sceKernelDeleteCallback, SceUID callbackId) {
     emuenv.kernel.callbacks.erase(callbackId);
     if (cb_owner_thread) {
         auto &v = cb_owner_thread->callbacks;
-        v.erase(std::remove(v.begin(), v.end(), cb), v.end());
+        std::erase(v, cb);
     }
     return 0;
 }
@@ -1127,7 +1145,7 @@ EXPORT(int, sceKernelDeleteSimpleEvent, SceUID event_id) {
 
 EXPORT(int, sceKernelDeleteThread, SceUID thid) {
     TRACY_FUNC(sceKernelDeleteThread, thid);
-    const ThreadStatePtr thread = lock_and_find(thid, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thid);
     if (!thread || thread->status != ThreadStatus::dormant) {
         return SCE_KERNEL_ERROR_NOT_DORMANT;
     }
@@ -1145,7 +1163,7 @@ EXPORT(int, sceKernelDeleteTimer, SceUID timer_handle) {
 
 EXPORT(int, sceKernelExitDeleteThread, int status) {
     TRACY_FUNC(sceKernelExitDeleteThread, status);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
     thread->exit_delete();
 
     return status;
@@ -1168,8 +1186,8 @@ EXPORT(int, sceKernelGetMsgPipeCreatorId) {
 
 EXPORT(int, sceKernelGetProcessId) {
     TRACY_FUNC(sceKernelGetProcessId);
-    STUBBED("pid: 0");
-    return 0;
+    STUBBED("pid: 1");
+    return 1;
 }
 
 EXPORT(uint64_t, sceKernelGetSystemTimeWide) {
@@ -1268,24 +1286,9 @@ EXPORT(int, sceKernelOpenSimpleEvent) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(SceUID, sceKernelOpenTimer, const char *name) {
-    TRACY_FUNC(sceKernelOpenTimer, name);
-    STUBBED("References not implemented.");
-
-    SceUID timer_handle = -1;
-    TimerPtr timer_info;
-
-    const std::lock_guard<std::mutex> guard(emuenv.kernel.mutex);
-    for (const auto &timer : emuenv.kernel.timers) {
-        if (timer.second->name == name) {
-            timer_handle = timer.first;
-            timer_info = timer.second;
-            break;
-        }
-    }
-    emuenv.kernel.mutex.unlock();
-
-    return timer_handle;
+EXPORT(SceUID, sceKernelOpenTimer, const char *pName) {
+    TRACY_FUNC(sceKernelOpenTimer, pName);
+    return timer_find(emuenv.kernel, export_name, pName);
 }
 
 EXPORT(int, sceKernelPollSema, SceUID semaid, int32_t needCount) {
@@ -1317,7 +1320,7 @@ EXPORT(int, sceKernelResumeThreadForVM, SceUID threadId) {
     TRACY_FUNC(sceKernelResumeThreadForVM, threadId);
     STUBBED("STUB");
 
-    const ThreadStatePtr thread = lock_and_find(threadId, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
     if (!thread)
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
 
@@ -1329,7 +1332,7 @@ EXPORT(int, sceKernelResumeThreadForVM, SceUID threadId) {
 EXPORT(int, sceKernelSendSignal, SceUID target_thread_id) {
     TRACY_FUNC(sceKernelSendSignal, target_thread_id);
     STUBBED("sceKernelSendSignal");
-    const auto thread = lock_and_find(target_thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const auto thread = emuenv.kernel.get_thread(target_thread_id);
     if (!thread->signal.send()) {
         return SCE_KERNEL_ERROR_ALREADY_SENT;
     }
@@ -1395,7 +1398,7 @@ EXPORT(int, sceKernelSuspendThreadForVM, SceUID threadId) {
     TRACY_FUNC(sceKernelSuspendThreadForVM, threadId);
     STUBBED("STUB");
 
-    const ThreadStatePtr thread = lock_and_find(threadId, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
     if (!thread)
         return RET_ERROR(SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID);
 
@@ -1458,177 +1461,3 @@ EXPORT(int, sceKernelWaitThreadEnd_089) {
     TRACY_FUNC(sceKernelWaitThreadEnd_089);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(__sceKernelCreateLwMutex)
-BRIDGE_IMPL(_sceKernelCancelEvent)
-BRIDGE_IMPL(_sceKernelCancelEventFlag)
-BRIDGE_IMPL(_sceKernelCancelEventWithSetPattern)
-BRIDGE_IMPL(_sceKernelCancelMsgPipe)
-BRIDGE_IMPL(_sceKernelCancelMutex)
-BRIDGE_IMPL(_sceKernelCancelRWLock)
-BRIDGE_IMPL(_sceKernelCancelSema)
-BRIDGE_IMPL(_sceKernelCancelTimer)
-BRIDGE_IMPL(_sceKernelCreateCond)
-BRIDGE_IMPL(_sceKernelCreateEventFlag)
-BRIDGE_IMPL(_sceKernelCreateLwCond)
-BRIDGE_IMPL(_sceKernelCreateMsgPipeWithLR)
-BRIDGE_IMPL(_sceKernelCreateMutex)
-BRIDGE_IMPL(_sceKernelCreateRWLock)
-BRIDGE_IMPL(_sceKernelCreateSema)
-BRIDGE_IMPL(_sceKernelCreateSema_16XX)
-BRIDGE_IMPL(_sceKernelCreateSimpleEvent)
-BRIDGE_IMPL(_sceKernelCreateTimer)
-BRIDGE_IMPL(_sceKernelDeleteLwCond)
-BRIDGE_IMPL(_sceKernelDeleteLwMutex)
-BRIDGE_IMPL(_sceKernelExitCallback)
-BRIDGE_IMPL(_sceKernelGetCallbackInfo)
-BRIDGE_IMPL(_sceKernelGetCondInfo)
-BRIDGE_IMPL(_sceKernelGetEventFlagInfo)
-BRIDGE_IMPL(_sceKernelGetEventInfo)
-BRIDGE_IMPL(_sceKernelGetEventPattern)
-BRIDGE_IMPL(_sceKernelGetLwCondInfo)
-BRIDGE_IMPL(_sceKernelGetLwCondInfoById)
-BRIDGE_IMPL(_sceKernelGetLwMutexInfoById)
-BRIDGE_IMPL(_sceKernelGetMsgPipeInfo)
-BRIDGE_IMPL(_sceKernelGetMutexInfo)
-BRIDGE_IMPL(_sceKernelGetRWLockInfo)
-BRIDGE_IMPL(_sceKernelGetSemaInfo)
-BRIDGE_IMPL(_sceKernelGetSystemInfo)
-BRIDGE_IMPL(_sceKernelGetSystemTime)
-BRIDGE_IMPL(_sceKernelGetThreadContextForVM)
-BRIDGE_IMPL(_sceKernelGetThreadCpuAffinityMask)
-BRIDGE_IMPL(_sceKernelGetThreadEventInfo)
-BRIDGE_IMPL(_sceKernelGetThreadExitStatus)
-BRIDGE_IMPL(_sceKernelGetThreadInfo)
-BRIDGE_IMPL(_sceKernelGetThreadRunStatus)
-BRIDGE_IMPL(_sceKernelGetTimerBase)
-BRIDGE_IMPL(_sceKernelGetTimerEventRemainingTime)
-BRIDGE_IMPL(_sceKernelGetTimerInfo)
-BRIDGE_IMPL(_sceKernelGetTimerTime)
-BRIDGE_IMPL(_sceKernelLockLwMutex)
-BRIDGE_IMPL(_sceKernelLockMutex)
-BRIDGE_IMPL(_sceKernelLockMutexCB)
-BRIDGE_IMPL(_sceKernelLockReadRWLock)
-BRIDGE_IMPL(_sceKernelLockReadRWLockCB)
-BRIDGE_IMPL(_sceKernelLockWriteRWLock)
-BRIDGE_IMPL(_sceKernelLockWriteRWLockCB)
-BRIDGE_IMPL(_sceKernelPMonThreadGetCounter)
-BRIDGE_IMPL(_sceKernelPollEvent)
-BRIDGE_IMPL(_sceKernelPollEventFlag)
-BRIDGE_IMPL(_sceKernelPulseEventWithNotifyCallback)
-BRIDGE_IMPL(_sceKernelReceiveMsgPipeVector)
-BRIDGE_IMPL(_sceKernelReceiveMsgPipeVectorCB)
-BRIDGE_IMPL(_sceKernelRegisterThreadEventHandler)
-BRIDGE_IMPL(_sceKernelSendMsgPipeVector)
-BRIDGE_IMPL(_sceKernelSendMsgPipeVectorCB)
-BRIDGE_IMPL(_sceKernelSetEventWithNotifyCallback)
-BRIDGE_IMPL(_sceKernelSetThreadContextForVM)
-BRIDGE_IMPL(_sceKernelSetTimerEvent)
-BRIDGE_IMPL(_sceKernelSetTimerTime)
-BRIDGE_IMPL(_sceKernelSignalLwCond)
-BRIDGE_IMPL(_sceKernelSignalLwCondAll)
-BRIDGE_IMPL(_sceKernelSignalLwCondTo)
-BRIDGE_IMPL(_sceKernelStartThread)
-BRIDGE_IMPL(_sceKernelTryReceiveMsgPipeVector)
-BRIDGE_IMPL(_sceKernelTrySendMsgPipeVector)
-BRIDGE_IMPL(_sceKernelUnlockLwMutex)
-BRIDGE_IMPL(_sceKernelWaitCond)
-BRIDGE_IMPL(_sceKernelWaitCondCB)
-BRIDGE_IMPL(_sceKernelWaitEvent)
-BRIDGE_IMPL(_sceKernelWaitEventCB)
-BRIDGE_IMPL(_sceKernelWaitEventFlag)
-BRIDGE_IMPL(_sceKernelWaitEventFlagCB)
-BRIDGE_IMPL(_sceKernelWaitException)
-BRIDGE_IMPL(_sceKernelWaitExceptionCB)
-BRIDGE_IMPL(_sceKernelWaitLwCond)
-BRIDGE_IMPL(_sceKernelWaitLwCondCB)
-BRIDGE_IMPL(_sceKernelWaitMultipleEvents)
-BRIDGE_IMPL(_sceKernelWaitMultipleEventsCB)
-BRIDGE_IMPL(_sceKernelWaitSema)
-BRIDGE_IMPL(_sceKernelWaitSemaCB)
-BRIDGE_IMPL(_sceKernelWaitSignal)
-BRIDGE_IMPL(_sceKernelWaitSignalCB)
-BRIDGE_IMPL(_sceKernelWaitThreadEnd)
-BRIDGE_IMPL(_sceKernelWaitThreadEndCB)
-BRIDGE_IMPL(sceKernelCancelCallback)
-BRIDGE_IMPL(sceKernelChangeActiveCpuMask)
-BRIDGE_IMPL(sceKernelChangeThreadCpuAffinityMask)
-BRIDGE_IMPL(sceKernelChangeThreadPriority)
-BRIDGE_IMPL(sceKernelChangeThreadPriority2)
-BRIDGE_IMPL(sceKernelChangeThreadVfpException)
-BRIDGE_IMPL(sceKernelCheckCallback)
-BRIDGE_IMPL(sceKernelCheckWaitableStatus)
-BRIDGE_IMPL(sceKernelClearEvent)
-BRIDGE_IMPL(sceKernelClearEventFlag)
-BRIDGE_IMPL(sceKernelCloseCond)
-BRIDGE_IMPL(sceKernelCloseEventFlag)
-BRIDGE_IMPL(sceKernelCloseMsgPipe)
-BRIDGE_IMPL(sceKernelCloseMutex)
-BRIDGE_IMPL(sceKernelCloseMutex_089)
-BRIDGE_IMPL(sceKernelCloseRWLock)
-BRIDGE_IMPL(sceKernelCloseSema)
-BRIDGE_IMPL(sceKernelCloseSimpleEvent)
-BRIDGE_IMPL(sceKernelCloseTimer)
-BRIDGE_IMPL(sceKernelCreateCallback)
-BRIDGE_IMPL(sceKernelCreateThreadForUser)
-BRIDGE_IMPL(sceKernelDelayThread)
-BRIDGE_IMPL(sceKernelDelayThread200)
-BRIDGE_IMPL(sceKernelDelayThreadCB)
-BRIDGE_IMPL(sceKernelDelayThreadCB200)
-BRIDGE_IMPL(sceKernelDeleteCallback)
-BRIDGE_IMPL(sceKernelDeleteCond)
-BRIDGE_IMPL(sceKernelDeleteEventFlag)
-BRIDGE_IMPL(sceKernelDeleteMsgPipe)
-BRIDGE_IMPL(sceKernelDeleteMutex)
-BRIDGE_IMPL(sceKernelDeleteRWLock)
-BRIDGE_IMPL(sceKernelDeleteSema)
-BRIDGE_IMPL(sceKernelDeleteSimpleEvent)
-BRIDGE_IMPL(sceKernelDeleteThread)
-BRIDGE_IMPL(sceKernelDeleteTimer)
-BRIDGE_IMPL(sceKernelExitDeleteThread)
-BRIDGE_IMPL(sceKernelGetCallbackCount)
-BRIDGE_IMPL(sceKernelGetMsgPipeCreatorId)
-BRIDGE_IMPL(sceKernelGetProcessId)
-BRIDGE_IMPL(sceKernelGetSystemTimeWide)
-BRIDGE_IMPL(sceKernelGetThreadCpuAffinityMask)
-BRIDGE_IMPL(sceKernelGetThreadStackFreeSize)
-BRIDGE_IMPL(sceKernelGetThreadTLSAddr)
-BRIDGE_IMPL(sceKernelGetThreadmgrUIDClass)
-BRIDGE_IMPL(sceKernelGetTimerBaseWide)
-BRIDGE_IMPL(sceKernelGetTimerTimeWide)
-BRIDGE_IMPL(sceKernelNotifyCallback)
-BRIDGE_IMPL(sceKernelOpenCond)
-BRIDGE_IMPL(sceKernelOpenEventFlag)
-BRIDGE_IMPL(sceKernelOpenMsgPipe)
-BRIDGE_IMPL(sceKernelOpenMutex)
-BRIDGE_IMPL(sceKernelOpenMutex_089)
-BRIDGE_IMPL(sceKernelOpenRWLock)
-BRIDGE_IMPL(sceKernelOpenSema)
-BRIDGE_IMPL(sceKernelOpenSimpleEvent)
-BRIDGE_IMPL(sceKernelOpenTimer)
-BRIDGE_IMPL(sceKernelPollSema)
-BRIDGE_IMPL(sceKernelPulseEvent)
-BRIDGE_IMPL(sceKernelRegisterCallbackToEvent)
-BRIDGE_IMPL(sceKernelResumeThreadForVM)
-BRIDGE_IMPL(sceKernelSendSignal)
-BRIDGE_IMPL(sceKernelSetEvent)
-BRIDGE_IMPL(sceKernelSetEventFlag)
-BRIDGE_IMPL(sceKernelSetTimerTimeWide)
-BRIDGE_IMPL(sceKernelSignalCond)
-BRIDGE_IMPL(sceKernelSignalCondAll)
-BRIDGE_IMPL(sceKernelSignalCondTo)
-BRIDGE_IMPL(sceKernelSignalSema)
-BRIDGE_IMPL(sceKernelStartTimer)
-BRIDGE_IMPL(sceKernelStopTimer)
-BRIDGE_IMPL(sceKernelSuspendThreadForVM)
-BRIDGE_IMPL(sceKernelTryLockMutex)
-BRIDGE_IMPL(sceKernelTryLockReadRWLock)
-BRIDGE_IMPL(sceKernelTryLockWriteRWLock)
-BRIDGE_IMPL(sceKernelUnlockMutex)
-BRIDGE_IMPL(sceKernelUnlockReadRWLock)
-BRIDGE_IMPL(sceKernelUnlockWriteRWLock)
-BRIDGE_IMPL(sceKernelUnregisterCallbackFromEvent)
-BRIDGE_IMPL(sceKernelUnregisterCallbackFromEventAll)
-BRIDGE_IMPL(sceKernelUnregisterThreadEventHandler)
-BRIDGE_IMPL(sceKernelWaitThreadEndCB_089)
-BRIDGE_IMPL(sceKernelWaitThreadEnd_089)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,18 +16,16 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 #include <chrono>
-#include <gxm/types.h>
 #include <renderer/commands.h>
 #include <renderer/driver_functions.h>
 #include <renderer/state.h>
 #include <renderer/types.h>
 
+#include <display/state.h>
 #include <renderer/gl/functions.h>
 #include <renderer/vulkan/functions.h>
-#include <renderer/vulkan/types.h>
 
 #include <renderer/functions.h>
-#include <util/log.h>
 #include <util/tracy.h>
 
 namespace renderer {
@@ -43,7 +41,12 @@ COMMAND(handle_signal_sync_object) {
     SceGxmSyncObject *sync = helper.pop<Ptr<SceGxmSyncObject>>().get(mem);
     const uint32_t timestamp = helper.pop<uint32_t>();
 
-    renderer::subject_done(sync, timestamp);
+    if (features.support_memory_mapping && config.current_config.high_accuracy) {
+        assert(renderer.current_backend == renderer::Backend::Vulkan);
+        vulkan::signal_sync_object(dynamic_cast<vulkan::VKState &>(renderer), sync, timestamp);
+    } else {
+        renderer::subject_done(sync, timestamp);
+    }
 }
 
 COMMAND(handle_wait_sync_object) {
@@ -69,6 +72,18 @@ COMMAND(handle_notification) {
 
 COMMAND(new_frame) {
     TRACY_FUNC_COMMANDS(new_frame);
+    DisplayFrameInfo *next_frame = helper.pop<DisplayFrameInfo *>();
+
+    if (next_frame) {
+        // set the predicted frame as the next one to render
+        DisplayState *display = helper.pop<DisplayState *>();
+        std::lock_guard<std::mutex> guard(display->display_info_mutex);
+        display->next_rendered_frame = *next_frame;
+        delete next_frame;
+
+        renderer.should_display = true;
+    }
+
     if (renderer.current_backend == Backend::Vulkan) {
         vulkan::new_frame(*reinterpret_cast<vulkan::VKContext *>(renderer.context));
     }

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,16 +25,9 @@
 
 #include <SPIRV/SpvBuilder.h>
 
-#include <array>
-#include <map>
-
 struct FeatureState;
 
 namespace shader::usse {
-
-// For debugging SPIR-V output
-static uint32_t instr_idx = 0;
-constexpr std::size_t max_sa_registers = 128;
 
 struct USSERecompiler;
 
@@ -51,7 +44,7 @@ public:
 
     spv::Id const_f32_v0[5];
 
-    utils::SpirvUtilFunctions m_util_funcs;
+    utils::SpirvUtilFunctions &m_util_funcs;
 
     spv::Block *main_block;
     spv::Id out;
@@ -63,7 +56,7 @@ public:
 
     void do_texture_queries(const NonDependentTextureQueryCallInfos &texture_queries);
     // extra1 is either lod or ddx, extra2 is ddy
-    spv::Id do_fetch_texture(const spv::Id tex, const Coord &coord, const DataType dest_type, const int lod_mode,
+    spv::Id do_fetch_texture(const spv::Id tex, const int texture_index, const int dim, const Coord &coord, const DataType dest_type, const int lod_mode,
         const spv::Id extra1 = spv::NoResult, const spv::Id extra2 = spv::NoResult, const int gather4_comp = -1);
 
     USSETranslatorVisitor() = delete;
@@ -85,8 +78,7 @@ public:
         // Set main block
         main_block = m_b.getBuildPoint();
 
-        // Import GLSL.std.450
-        std_builtins = m_b.import("GLSL.std.450");
+        std_builtins = utils.std_builtins;
 
         // Build common type here, so builder won't have to look it up later
         type_f32 = m_b.makeFloatType(32);
@@ -97,21 +89,18 @@ public:
         const_f32[1] = m_b.makeFloatConstant(1.0f);
         const_f32[2] = m_b.makeFloatConstant(2.0f);
 
-        for (std::uint8_t i = 1; i < 5; i++) {
-            if (i == 1) {
-                type_f32_v[i] = type_f32;
-                const_f32_v0[i] = const_f32[0];
-            } else {
-                type_f32_v[i] = m_b.makeVectorType(type_f32, i);
+        type_f32_v[1] = type_f32;
+        const_f32_v0[1] = const_f32[0];
+        for (std::uint8_t i = 2; i < 5; i++) {
+            type_f32_v[i] = m_b.makeVectorType(type_f32, i);
 
-                std::vector<spv::Id> consts;
+            std::vector<spv::Id> consts;
 
-                for (std::uint8_t j = 1; j < i + 1; j++) {
-                    consts.push_back(const_f32[0]);
-                }
-
-                const_f32_v0[i] = m_b.makeCompositeConstant(type_f32_v[i], consts);
+            for (std::uint8_t j = 1; j < i + 1; j++) {
+                consts.push_back(const_f32[0]);
             }
+
+            const_f32_v0[i] = m_b.makeCompositeConstant(type_f32_v[i], consts);
         }
 
         do_texture_queries(queries);
@@ -140,20 +129,20 @@ private:
     for (auto current_repeat = 0; current_repeat < repeat_count_num; current_repeat++) {
 #define END_REPEAT() }
 
-#define GET_REPEAT(inst, repeat_mode)                                                                           \
-    int dest_repeat_offset = get_repeat_offset(inst.opr.dest, current_repeat, repeat_mode, inst.opr.dest.bank); \
-    int src0_repeat_offset = get_repeat_offset(inst.opr.src0, current_repeat, repeat_mode, inst.opr.src0.bank); \
-    int src1_repeat_offset = get_repeat_offset(inst.opr.src1, current_repeat, repeat_mode, inst.opr.src1.bank); \
-    int src2_repeat_offset = get_repeat_offset(inst.opr.src2, current_repeat, repeat_mode, inst.opr.src2.bank);
+#define GET_REPEAT(inst, repeat_mode)                                                                                            \
+    [[maybe_unused]] int dest_repeat_offset = get_repeat_offset(inst.opr.dest, current_repeat, repeat_mode, inst.opr.dest.bank); \
+    [[maybe_unused]] int src0_repeat_offset = get_repeat_offset(inst.opr.src0, current_repeat, repeat_mode, inst.opr.src0.bank); \
+    [[maybe_unused]] int src1_repeat_offset = get_repeat_offset(inst.opr.src1, current_repeat, repeat_mode, inst.opr.src1.bank); \
+    [[maybe_unused]] int src2_repeat_offset = get_repeat_offset(inst.opr.src2, current_repeat, repeat_mode, inst.opr.src2.bank);
 
     const int get_repeat_offset(Operand &op, const std::uint8_t repeat_index, RepeatMode repeat_mode, RegisterBank bank) {
-        if (repeat_mode == RepeatMode::INTERNAL) {
+        if (repeat_mode == RepeatMode::INTERNAL || repeat_mode == RepeatMode::BOTH) {
             if (bank == RegisterBank::FPINTERNAL) {
                 return repeat_index;
             }
         }
-        // GPI operand can only get repeat offset with INTERNAL repeat mode.
-        // Intentionally put this here so that INTERNAL is checked with every FPINTERNAL, even if not GPI.
+        // GPI operand can only get repeat offset with INTERNAL/BOTH repeat mode.
+        // Intentionally put this here so that INTERNAL/BOTH is checked with every FPINTERNAL, even if not GPI.
         if (op.flags & RegisterFlags::GPI) {
             return 0;
         }
@@ -170,7 +159,10 @@ private:
         if (repeat_mode == RepeatMode::SLMSI) {
             auto inc = repeat_increase[op.index][repeat_index];
 
-            if (((bank >= RegisterBank::TEMP) && (bank <= RegisterBank::SECATTR)) || bank == RegisterBank::PREDICATE)
+            if (((bank >= RegisterBank::TEMP) && (bank <= RegisterBank::SECATTR))
+                || bank == RegisterBank::PREDICATE
+                || bank == RegisterBank::INDEXED1
+                || bank == RegisterBank::INDEXED2)
                 inc *= repeat_multiplier[op.index];
 
             return inc;
@@ -763,6 +755,12 @@ public:
         Imm8 src0_inc,
         Imm8 src1_inc,
         Imm8 src2_inc);
+
+    bool smbo(Imm1 nosched,
+        Imm12 dest_offset,
+        Imm12 src0_offset,
+        Imm12 src1_offset,
+        Imm12 src2_offset);
 
     bool kill(ShortPredicate pred);
 

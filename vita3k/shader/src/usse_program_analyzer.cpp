@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,14 +15,13 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <gxm/functions.h>
 #include <gxm/types.h>
 #include <shader/gxp_parser.h>
 #include <shader/usse_program_analyzer.h>
+#include <shader/usse_types.h>
 
 #include <cassert>
-
-#include <shader/usse_types.h>
+#include <queue>
 
 namespace shader::usse {
 bool is_kill(const std::uint64_t inst) {
@@ -48,6 +47,16 @@ bool is_branch(const std::uint64_t inst, std::uint8_t &pred, std::int32_t &br_of
     return br_inst_is;
 }
 
+static bool is_return(std::uint64_t inst) {
+    const std::uint32_t high = (inst >> 32);
+    const std::uint32_t op_shift = (high & ~0x07FFFFFFU) >> 27;
+    const std::uint32_t op_mask = (high & ~0xFFCFFFFFU) >> 20;
+    const bool link_bit_clear = !(high & 0x00400000);
+    const std::uint32_t op_check = (high & ~0xFFFFFE3FU) >> 6;
+
+    return (op_shift == 0b11111) && (op_mask == 0) && link_bit_clear && (op_check == 2);
+}
+
 bool does_write_to_predicate(const std::uint64_t inst, std::uint8_t &pred) {
     if ((((inst >> 59) & 0b11111) == 0b01001) || (((inst >> 59) & 0b11111) == 0b01111)) {
         pred = static_cast<std::uint8_t>((inst & ~0xFFFFFFF3FFFFFFFF) >> 34);
@@ -59,40 +68,23 @@ bool does_write_to_predicate(const std::uint64_t inst, std::uint8_t &pred) {
 
 std::uint8_t get_predicate(const std::uint64_t inst) {
     switch (inst >> 59) {
-    // Special instructions
-    case 0b11111: {
-        if ((((inst >> 32) & ~0xFF8FFFFF) >> 20) == 0) {
-            break;
-        }
+    // VMAD2
+    case 0b00000:
+        return ((inst >> 32) & ~0xFCFFFFFF) >> 24;
 
-        // Kill
-        if ((((inst >> 32) & ~0xF8FFFFFF) >> 24) == 1 && ((inst >> 32) & ~0xFFCFFFFF) >> 20 == 3) {
-            uint8_t pred = ((inst >> 32) & (~0xFFFFF9FF)) >> 9;
-            switch (pred) {
-            case 0:
-                return static_cast<uint8_t>(ExtPredicate::NONE);
-            case 1:
-                return static_cast<uint8_t>(ExtPredicate::NEGP0);
-            case 2:
-                return static_cast<uint8_t>(ExtPredicate::NEGP1);
-            case 3:
-                return static_cast<uint8_t>(ExtPredicate::P0);
-            default:
-                return 0;
-            }
-        }
-
-        // Load immediate
-        if (((((inst >> 32) & ~0xF8FFFFFF) >> 24) == 4) && (((inst >> 32) & ~0xFFCFFFFF) >> 20 == 2)) {
-            return (((inst >> 32) & ~0xFFFFF1FF) >> 9);
-        }
-
-        return 0;
+    // V32NMAD, V16NMAD, VMAD
+    case 0b00001:
+    case 0b00010:
+    case 0b00011: {
+        uint8_t predicate = ((inst >> 32) & ~0xF8FFFFFFU) >> 24;
+        return static_cast<uint8_t>(ext_vec_predicate_to_ext(static_cast<ExtVecPredicate>(predicate)));
     }
+
     // VMAD normal version, predicates only occupied two bits
     case 0b00100:
     case 0b00101: {
         uint8_t predicate = ((inst >> 32) & ~0xFCFFFFFF) >> 24;
+        // short vector predicate
         switch (predicate) {
         case 0:
             return static_cast<uint8_t>(ExtPredicate::NONE);
@@ -106,27 +98,66 @@ std::uint8_t get_predicate(const std::uint64_t inst) {
             return 0;
         }
     }
-    // SOP2, I32MAD
+
+    // SOP2, SOP2M, SOP3, I8MAD, I16MAD, I32MAD
     case 0b10000:
-    case 0b10101:
-    case 0b10011: {
+    case 0b10001:
+    case 0b10010:
+    case 0b10011:
+    case 0b10100:
+    case 0b10101: {
         uint8_t predicate = ((inst >> 32) & ~0xF9FFFFFF) >> 25;
         return static_cast<uint8_t>(short_predicate_to_ext(static_cast<ShortPredicate>(predicate)));
     }
-    // V16NMAD, V32NMAD, VMAD, VDP
-    case 0b00011:
-    case 0b00010:
-    case 0b00001: {
-        uint8_t predicate = ((inst >> 32) & ~0xF8FFFFFFU) >> 24;
-        return static_cast<uint8_t>(ext_vec_predicate_to_ext(static_cast<ExtVecPredicate>(predicate)));
+
+    // Special instructions
+    case 0b11111: {
+        const uint8_t opcat = (inst >> (32 + 20)) & 0b11;
+        const uint8_t opcat_extra = (inst >> (32 + 22)) & 0b1;
+        if (opcat == 0) {
+            if (opcat_extra == 0)
+                // BR
+                break;
+            else
+                // PHAS
+                return 0;
+        }
+
+        const uint8_t op2 = (inst >> (32 + 24)) & 0b111;
+
+        if (opcat == 0b11 && op2 == 0b001) {
+            // KILL
+            uint8_t pred = ((inst >> 32) & (~0xFFFFF9FF)) >> 9;
+            // note: this is the opposite of the short predicate when there is a predicate
+            switch (pred) {
+            case 0:
+                return static_cast<uint8_t>(ExtPredicate::NONE);
+            case 1:
+                return static_cast<uint8_t>(ExtPredicate::NEGP0);
+            case 2:
+                return static_cast<uint8_t>(ExtPredicate::NEGP1);
+            case 3:
+                return static_cast<uint8_t>(ExtPredicate::P0);
+            default:
+                return 0;
+            }
+        } else if (opcat == 0b10 && op2 == 0b100) {
+            // LIMM
+            return (((inst >> 32) & ~0xFFFFF1FF) >> 9);
+        } else if (opcat == 0b11 && op2 == 0b011) {
+            // DEPTHF
+            uint8_t predicate = ((inst >> 32) & ~0xFFFFF9FFU) >> 9;
+            return static_cast<uint8_t>(short_predicate_to_ext(static_cast<ShortPredicate>(predicate)));
+        }
+
+        return 0;
     }
-    case 0b00000:
-        return ((inst >> 32) & ~0xFCFFFFFF) >> 24;
 
     default:
         break;
     }
 
+    // most common predicate location
     return ((inst >> 32) & ~0xF8FFFFFFU) >> 24;
 }
 
@@ -137,7 +168,7 @@ bool is_buffer_fetch_or_store(const std::uint64_t inst, int &base, int &cursor, 
     // Are you me? Or am i you
     if (((inst >> 59) & 0b11111) == 0b11101 || ((inst >> 59) & 0b11111) == 0b11110) {
         // Get the base
-        offset = cursor + (inst >> 7) & 0b1111111;
+        offset = (cursor + (inst >> 7)) & 0b1111111;
         base = (inst >> 14) & 0b1111111;
 
         // Data type downwards: 4 bytes, 2 bytes, 1 bytes, 0 bytes
@@ -150,38 +181,37 @@ bool is_buffer_fetch_or_store(const std::uint64_t inst, int &base, int &cursor, 
     return false;
 }
 
-int match_uniform_buffer_with_buffer_size(const SceGxmProgram &program, const SceGxmProgramParameter &parameter, const shader::usse::UniformBufferMap &buffers) {
-    assert(parameter.component_count == 0 && parameter.category == SCE_GXM_PARAMETER_CATEGORY_UNIFORM_BUFFER);
+int get_uniform_buffer_sizes(const SceGxmProgram &program, UniformBufferSizes &sizes) {
+    memset(sizes.data(), 0, sizeof(UniformBufferSizes));
 
-    // Determine base value
-    int base = gxp::get_uniform_buffer_base(program, parameter);
-
-    // Search for the buffer from analyzed list
-    if (buffers.find(base) != buffers.end()) {
-        return (buffers.at(base).size + 3) / 4;
-    }
-
-    return -1;
-}
-
-void get_uniform_buffer_sizes(const SceGxmProgram &program, UniformBufferSizes &sizes) {
+    int max_used_idx = 0;
     const auto program_input = shader::get_program_input(program);
     for (const auto &buffer : program_input.uniform_buffers) {
-        sizes[buffer.index] = buffer.size;
+        if (buffer.index < SCE_GXM_REAL_MAX_UNIFORM_BUFFER && buffer.size > 0) {
+            if (buffer.index < SCE_GXM_MAX_UNIFORM_BUFFERS) {
+                sizes[buffer.index + SCE_GXM_UNIFORM_BUFFER_OFFSET] = buffer.size;
+                max_used_idx = std::max<int>(max_used_idx, buffer.index + SCE_GXM_UNIFORM_BUFFER_OFFSET + 1);
+            } else {
+                // default buffer
+                sizes[SCE_GXM_DEFAULT_UNIFORM_BUFFER_CONTAINER_INDEX] = buffer.size;
+                max_used_idx = std::max(max_used_idx, 1);
+            }
+        }
     }
+
+    return max_used_idx;
 }
 
 void get_attribute_informations(const SceGxmProgram &program, AttributeInformationMap &locmap) {
-    const SceGxmProgramParameter *const gxp_parameters = gxp::program_parameters(program);
+    const SceGxmProgramParameter *const gxp_parameters = program.program_parameters();
     std::uint32_t fcount_allocated = 0;
     const auto vertex_varyings_ptr = program.vertex_varyings();
 
     for (size_t i = 0; i < program.parameter_count; ++i) {
         const SceGxmProgramParameter &parameter = gxp_parameters[i];
         if (parameter.category == SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE) {
-            const SceGxmParameterType parameter_type = gxp::parameter_type(parameter);
             bool is_integer;
-            switch (parameter_type) {
+            switch (parameter.type) {
             case SCE_GXM_PARAMETER_TYPE_C10:
             case SCE_GXM_PARAMETER_TYPE_F16:
             case SCE_GXM_PARAMETER_TYPE_F32:
@@ -193,18 +223,19 @@ void get_attribute_informations(const SceGxmProgram &program, AttributeInformati
             }
 
             bool is_signed;
-            switch (parameter_type) {
+            switch (parameter.type) {
             case SCE_GXM_PARAMETER_TYPE_S8:
             case SCE_GXM_PARAMETER_TYPE_S16:
             case SCE_GXM_PARAMETER_TYPE_S32:
                 is_signed = true;
+                break;
             default:
                 is_signed = false;
+                break;
             }
 
             bool regformat = (vertex_varyings_ptr->untyped_pa_regs & ((uint64_t)1 << parameter.resource_index)) != 0;
-
-            locmap.emplace(parameter.resource_index, AttributeInformation(fcount_allocated / 4, parameter.type, is_integer, is_signed, regformat));
+            locmap.emplace(parameter.resource_index, AttributeInformation(fcount_allocated / 4, parameter.type, parameter.component_count, is_integer, is_signed, regformat));
             fcount_allocated += ((parameter.array_size * parameter.component_count + 3) / 4) * 4;
         }
     }
@@ -278,7 +309,7 @@ void USSELoopNode::set_content_block(USSEBaseNodeInstance &node) {
     children[0] = std::move(node);
 }
 
-void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction read_func) {
+void analyze(USSEBlockNode &root, USSEOffset end_offset, const AnalyzeReadFunction &read_func) {
     struct BlockInvestigateRequest {
         USSEOffset begin_offset;
         USSEOffset end_offset;
@@ -298,14 +329,17 @@ void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction rea
     std::multimap<std::uint32_t, BranchInfo> branches_to_back;
     std::map<std::uint32_t, BranchInfo> branches_from;
 
-    std::queue<BlockInvestigateRequest> investigate_queue;
-    investigate_queue.push({ 0, end_offset, &root });
+    // The return offset is often used to find the end of the function
+    std::uint32_t return_offset = 0;
+
+    // The call stack is used to track the function calls
+    std::vector<std::uint32_t> calls_stack;
 
     // First off query all branches first
     // This is for easy tracing of loops and branches later, without complicating the algorithm
     // For example, loop might be in a loop :(
-    for (usse::USSEOffset baddr = 0; baddr <= end_offset; baddr += 1) {
-        auto inst = read_func(baddr);
+    for (usse::USSEOffset baddr = 0; baddr <= end_offset; baddr++) {
+        const auto inst = read_func(baddr);
 
         std::uint8_t pred = 0;
         std::int32_t br_off = 0;
@@ -314,12 +348,28 @@ void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction rea
             const std::uint32_t dest = baddr + br_off;
             BranchInfo info = { baddr, dest, pred };
 
+            if ((dest == 0) && (return_offset > 0))
+                calls_stack.push_back(baddr);
+
             if (br_off < 0)
                 branches_to_back.emplace(dest, info);
 
             branches_from.emplace(baddr, info);
         }
+
+        if (is_return(inst))
+            return_offset = baddr;
     }
+
+    std::uint32_t start_offset = return_offset;
+    std::queue<BlockInvestigateRequest> investigate_queue;
+    for (const auto call : calls_stack) {
+        investigate_queue.push({ start_offset, call - 1, &root });
+        investigate_queue.push({ 0, return_offset, &root });
+        start_offset = call + 1;
+    }
+
+    investigate_queue.push({ start_offset, end_offset, &root });
 
     while (!investigate_queue.empty()) {
         BlockInvestigateRequest request = std::move(investigate_queue.front());
@@ -425,7 +475,7 @@ void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction rea
                                 auto end_ite = branches_from.lower_bound(branch_from_result->second.dest - 1);
 
                                 if ((begin_ite != branches_from.end()) && (end_ite != branches_from.end())) {
-                                    for (; begin_ite != end_ite; begin_ite++) {
+                                    for (; begin_ite != end_ite; ++begin_ite) {
                                         if (begin_ite->second.dest > branch_from_result->second.dest) {
                                             else_exist = true;
                                             else_end_offset = begin_ite->second.dest;
@@ -472,10 +522,10 @@ void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction rea
                         baddr = current_code->offset - 1;
                     }
                 }
-            } else if ((branches_to_back.find(baddr) != branches_to_back.end()) && (request.block_node->start_offset() != baddr)) {
+            } else if (branches_to_back.contains(baddr) && (request.block_node->start_offset() != baddr)) {
                 // The loop continue target should be unconditional and farest
                 std::uint32_t found_offset = 0xFFFFFFFF;
-                for (auto ite = branch_to_result.first; ite != branch_to_result.second; ite++) {
+                for (auto ite = branch_to_result.first; ite != branch_to_result.second; ++ite) {
                     if ((ite->second.pred == 0) && ((found_offset == 0xFFFFFFFF) || (found_offset < ite->second.offset))) {
                         found_offset = ite->second.offset;
                     }
@@ -515,7 +565,7 @@ void analyze(USSEBlockNode &root, USSEOffset end_offset, AnalyzeReadFunction rea
 
                 // Either if the instruction has different predicate with the block,
                 // or the predicate value is being invalidated (overwritten)
-                // which means continuing is obselete. Stop now
+                // which means continuing is obsolete. Stop now
                 if (pred != current_code->condition) {
                     current_code->size = baddr - current_code->offset;
                     offset_end = baddr;

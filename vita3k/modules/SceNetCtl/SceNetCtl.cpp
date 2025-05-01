@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNetCtl.h"
+#include <module/module.h>
 
 #include <kernel/state.h>
 #include <net/state.h>
@@ -256,7 +256,7 @@ EXPORT(int, sceNetCtlCheckCallback) {
 
     emuenv.net.state = 1;
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     // TODO: Limit the number of callbacks called to 5
     // TODO: Check in which order the callbacks are executed
@@ -516,22 +516,3 @@ EXPORT(void, sceNetCtlTerm) {
     STUBBED("Stub");
     emuenv.netctl.inited = false;
 }
-
-BRIDGE_IMPL(sceNetCtlAdhocDisconnect)
-BRIDGE_IMPL(sceNetCtlAdhocGetInAddr)
-BRIDGE_IMPL(sceNetCtlAdhocGetPeerList)
-BRIDGE_IMPL(sceNetCtlAdhocGetResult)
-BRIDGE_IMPL(sceNetCtlAdhocGetState)
-BRIDGE_IMPL(sceNetCtlAdhocRegisterCallback)
-BRIDGE_IMPL(sceNetCtlAdhocUnregisterCallback)
-BRIDGE_IMPL(sceNetCtlCheckCallback)
-BRIDGE_IMPL(sceNetCtlGetIfStat)
-BRIDGE_IMPL(sceNetCtlGetNatInfo)
-BRIDGE_IMPL(sceNetCtlGetPhoneMaxDownloadableSize)
-BRIDGE_IMPL(sceNetCtlInetGetInfo)
-BRIDGE_IMPL(sceNetCtlInetGetResult)
-BRIDGE_IMPL(sceNetCtlInetGetState)
-BRIDGE_IMPL(sceNetCtlInetRegisterCallback)
-BRIDGE_IMPL(sceNetCtlInetUnregisterCallback)
-BRIDGE_IMPL(sceNetCtlInit)
-BRIDGE_IMPL(sceNetCtlTerm)

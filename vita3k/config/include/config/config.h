@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include <np/state.h>
-
 #include <util/log.h>
 #include <util/system.h>
 
@@ -28,14 +26,14 @@ enum ModulesMode {
     MANUAL
 };
 
-enum PerfomanceOverleyDetail {
+enum PerformanceOverlayDetail {
     MINIMUM,
     LOW,
     MEDIUM,
     MAXIMUM,
 };
 
-enum PerfomanceOverleyPosition {
+enum PerformanceOverlayPosition {
     TOP_LEFT,
     TOP_CENTER,
     TOP_RIGHT,
@@ -44,15 +42,23 @@ enum PerfomanceOverleyPosition {
     BOTTOM_RIGHT,
 };
 
+enum ScreenshotFormat {
+    None,
+    JPEG,
+    PNG,
+};
+
 // clang-format off
 // Singular options produced in config file
 // Order is code(option_type, option_name, option_default, member_name)
 // When adding in a new macro for generation, ALL options must be stated.
+// All member names starting with "keyboard_" will be considered as key input (See controls_dialog.cpp)
 #define CONFIG_INDIVIDUAL(code)                                                                         \
     code(bool, "initial-setup", false, initial_setup)                                                   \
     code(bool, "gdbstub", false, gdbstub)                                                               \
     code(bool, "log-active-shaders", false, log_active_shaders)                                         \
     code(bool, "log-uniforms", false, log_uniforms)                                                     \
+    code(bool, "log-compat-warn", false, log_compat_warn)                                               \
     code(bool, "validation-layer", true, validation_layer)                                              \
     code(bool, "pstv-mode", false, pstv_mode)                                                           \
     code(bool, "show-mode", false, show_mode)                                                           \
@@ -60,21 +66,30 @@ enum PerfomanceOverleyPosition {
     code(bool, "show-gui", false, show_gui)                                                             \
     code(bool, "show-info-bar", false, show_info_bar)                                                   \
     code(bool, "apps-list-grid", false, apps_list_grid)                                                 \
+    code(bool, "display-system-apps", true, display_system_apps)                                        \
+    code(bool, "stretch_the_display_area", false, stretch_the_display_area)                             \
+    code(bool, "fullscreen_hd_res_pixel_perfect", false, fullscreen_hd_res_pixel_perfect)               \
     code(bool, "show-live-area-screen", true, show_live_area_screen)                                    \
     code(int, "icon-size", 64, icon_size)                                                               \
     code(bool, "archive-log", false, archive_log)                                                       \
     code(std::string, "backend-renderer", "OpenGL", backend_renderer)                                   \
     code(int, "gpu-idx", 0, gpu_idx)                                                                    \
-    code(int, "resolution-multiplier", 1, resolution_multiplier)                                        \
+    code(bool, "high-accuracy", true, high_accuracy)                                                    \
+    code(float, "resolution-multiplier", 1.0f, resolution_multiplier)                                   \
     code(bool, "disable-surface-sync", true, disable_surface_sync)                                      \
     code(std::string, "screen-filter", "Bilinear", screen_filter)                                       \
     code(bool, "v-sync", true, v_sync)                                                                  \
     code(int, "anisotropic-filtering", 1, anisotropic_filtering)                                        \
     code(bool, "texture-cache", true, texture_cache)                                                    \
+    code(bool, "async-pipeline-compilation", true, async_pipeline_compilation)                          \
     code(bool, "show-compile-shaders", true, show_compile_shaders)                                      \
     code(bool, "hashless-texture-cache", false, hashless_texture_cache)                                 \
+    code(bool, "import-textures", false, import_textures)                                               \
+    code(bool, "export-textures", false, export_textures)                                               \
+    code(bool, "export-as-png", true, export_as_png)                                                    \
     code(bool, "boot-apps-full-screen", false, boot_apps_full_screen)                                   \
     code(std::string, "audio-backend", "SDL", audio_backend)                                            \
+    code(int, "audio-volume", 100, audio_volume)                                                        \
     code(bool, "ngs-enable", true, ngs_enable)                                                          \
     code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
     code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
@@ -92,9 +107,12 @@ enum PerfomanceOverleyPosition {
     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
     code(bool, "wait-for-debugger", false, wait_for_debugger)                                           \
     code(bool, "color-surface-debug", false, color_surface_debug)                                       \
+    code(bool, "show-touchpad-cursor", true, show_touchpad_cursor)                                      \
     code(bool, "performance-overlay", false, performance_overlay)                                       \
-    code(int, "perfomance-overlay-detail", static_cast<int>(MINIMUM), performance_overlay_detail)       \
-    code(int, "perfomance-overlay-position", static_cast<int>(TOP_LEFT), performance_overlay_position)  \
+    code(int, "performance-overlay-detail", static_cast<int>(MINIMUM), performance_overlay_detail)       \
+    code(int, "performance-overlay-position", static_cast<int>(TOP_LEFT), performance_overlay_position)  \
+    code(int, "screenshot-format", static_cast<int>(JPEG), screenshot_format)                           \
+    code(bool, "disable-motion", false, disable_motion)                                                 \
     code(int, "keyboard-button-select", 229, keyboard_button_select)                                    \
     code(int, "keyboard-button-start", 40, keyboard_button_start)                                       \
     code(int, "keyboard-button-up", 82, keyboard_button_up)                                             \
@@ -104,7 +122,7 @@ enum PerfomanceOverleyPosition {
     code(int, "keyboard-button-l1", 20, keyboard_button_l1)                                             \
     code(int, "keyboard-button-r1", 8, keyboard_button_r1)                                              \
     code(int, "keyboard-button-l2", 24, keyboard_button_l2)                                             \
-    code(int, "keyboard-button-r2", 27, keyboard_button_r2)                                             \
+    code(int, "keyboard-button-r2", 18, keyboard_button_r2)                                             \
     code(int, "keyboard-button-l3", 9, keyboard_button_l3)                                              \
     code(int, "keyboard-button-r3", 11, keyboard_button_r3)                                             \
     code(int, "keyboard-button-triangle", 25, keyboard_button_triangle)                                 \
@@ -123,16 +141,21 @@ enum PerfomanceOverleyPosition {
     code(int, "keyboard-gui-toggle-gui", 10, keyboard_gui_toggle_gui)                                   \
     code(int, "keyboard-gui-fullscreen", 68, keyboard_gui_fullscreen)                                   \
     code(int, "keyboard-gui-toggle-touch", 23, keyboard_gui_toggle_touch)                               \
+    code(int, "keyboard-toggle-texture-replacement", 0, keyboard_toggle_texture_replacement)            \
+    code(int, "keyboard-take-screenshot", 0, keyboard_take_screenshot)                                  \
     code(std::string, "user-id", std::string{}, user_id)                                                \
     code(bool, "user-auto-connect", false, auto_user_login)                                             \
-    code(bool, "dump-textures", false, dump_textures)                                                   \
-    code(bool, "display-info-message", true, display_info_message)                                      \
+    code(std::string, "user-lang", std::string{}, user_lang)                                            \
+    code(bool, "display-info-message", false, display_info_message)                                     \
     code(bool, "show-welcome", true, show_welcome)                                                      \
+    code(bool, "check-for-updates", true, check_for_updates)                                            \
+    code(int, "file-loading-delay", 0, file_loading_delay)                                              \
     code(bool, "asia-font-support", false, asia_font_support)                                           \
     code(bool, "shader-cache", true, shader_cache)                                                      \
     code(bool, "spirv-shader", false, spirv_shader)                                                     \
+    code(bool, "fps-hack", false, fps_hack)                                                             \
     code(uint64_t, "current-ime-lang", 4, current_ime_lang)                                             \
-    code(int, "psn-status", static_cast<int>(SCE_NP_SERVICE_STATE_UNKNOWN), psn_status)                 \
+    code(int, "psn-signed-in", false, psn_signed_in)                                                    \
     code(bool, "http-enable", true, http_enable)                                                        \
     code(int, "http-timeout-attempts", 50, http_timeout_attempts)                                       \
     code(int, "http-timeout-sleep-ms", 100, http_timeout_sleep_ms)                                      \
@@ -145,6 +168,8 @@ enum PerfomanceOverleyPosition {
 // If you are going to implement a dynamic list in the YAML, add it here instead
 // When adding in a new macro for generation, ALL options must be stated.
 #define CONFIG_VECTOR(code)                                                                             \
+    code(std::vector<short>, "controller-binds", std::vector<short>{}, controller_binds)                \
+    code(std::vector<int>, "controller-led-color", std::vector<int>{}, controller_led_color)            \
     code(std::vector<std::string>, "lle-modules", std::vector<std::string>{}, lle_modules)              \
     code(std::vector<uint64_t>, "ime-langs", std::vector<uint64_t>{4}, ime_langs)                       \
     code(std::vector<std::string>, "tracy-advanced-profiling-modules", std::vector<std::string>{}, tracy_advanced_profiling_modules)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceMotionDev.h"
+#include <module/module.h>
 
 EXPORT(int, sceMotionDevGetAccCalibData) {
     return UNIMPLEMENTED();
@@ -144,36 +144,3 @@ EXPORT(int, sceMotionDevUpdateMagnCalibData) {
 EXPORT(int, sceMotionDevUpdateMagnStabilityLevel) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceMotionDevGetAccCalibData)
-BRIDGE_IMPL(sceMotionDevGetAccCalibData2)
-BRIDGE_IMPL(sceMotionDevGetCalibrationData)
-BRIDGE_IMPL(sceMotionDevGetCalibrationHeader)
-BRIDGE_IMPL(sceMotionDevGetControllerType)
-BRIDGE_IMPL(sceMotionDevGetCurrentMagnCalibData)
-BRIDGE_IMPL(sceMotionDevGetCurrentMagnStabilityLevel)
-BRIDGE_IMPL(sceMotionDevGetDeviceInfo)
-BRIDGE_IMPL(sceMotionDevGetDeviceLocation)
-BRIDGE_IMPL(sceMotionDevGetDs3CalibData)
-BRIDGE_IMPL(sceMotionDevGetEvaInfo)
-BRIDGE_IMPL(sceMotionDevGetFactoryMagnCalibData)
-BRIDGE_IMPL(sceMotionDevGetGyroBias)
-BRIDGE_IMPL(sceMotionDevGetGyroBias2)
-BRIDGE_IMPL(sceMotionDevGetGyroCalibData)
-BRIDGE_IMPL(sceMotionDevGetGyroCalibData2)
-BRIDGE_IMPL(sceMotionDevGetMeasMode)
-BRIDGE_IMPL(sceMotionDevIsReady)
-BRIDGE_IMPL(sceMotionDevMagnSamplingStart)
-BRIDGE_IMPL(sceMotionDevMagnSamplingStop)
-BRIDGE_IMPL(sceMotionDevRead)
-BRIDGE_IMPL(sceMotionDevRead2)
-BRIDGE_IMPL(sceMotionDevRead3)
-BRIDGE_IMPL(sceMotionDevReadForMagnCalib)
-BRIDGE_IMPL(sceMotionDevSamplingStart)
-BRIDGE_IMPL(sceMotionDevSamplingStart2)
-BRIDGE_IMPL(sceMotionDevSamplingStop)
-BRIDGE_IMPL(sceMotionDevSamplingStop2)
-BRIDGE_IMPL(sceMotionDevSetGyroFeedBack)
-BRIDGE_IMPL(sceMotionDevSetSamplingMode)
-BRIDGE_IMPL(sceMotionDevUpdateMagnCalibData)
-BRIDGE_IMPL(sceMotionDevUpdateMagnStabilityLevel)

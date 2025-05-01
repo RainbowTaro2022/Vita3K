@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,19 +17,17 @@
 
 #pragma once
 
-#include <crypto/hash.h>
 #include <glutil/object.h>
 #include <glutil/object_array.h>
 #include <renderer/types.h>
+#include <util/hash.h>
 
 #include <renderer/gl/ring_buffer.h>
-#include <renderer/texture_cache_state.h>
-#include <shader/usse_program_analyzer.h>
+#include <renderer/texture_cache.h>
+#include <shader/uniform_block.h>
 
 #include <map>
 #include <memory>
-#include <set>
-#include <tuple>
 #include <vector>
 
 typedef void *SDL_GLContext;
@@ -49,12 +47,21 @@ inline bool operator==(const ExcludedUniform &lhs, const ExcludedUniform &rhs) {
 }
 
 typedef std::map<Sha256Hash, SharedGLObject> ShaderCache;
+typedef std::tuple<Sha256Hash, Sha256Hash> ProgramHashes;
 typedef std::map<ProgramHashes, SharedGLObject> ProgramCache;
 typedef std::vector<ExcludedUniform> ExcludedUniforms; // vector instead of unordered_set since it's much faster for few elements
 typedef std::map<GLuint, GLenum> UniformTypes;
 
-struct GLTextureCacheState : public renderer::TextureCacheState {
+class GLTextureCache : public TextureCache {
+public:
     GLObjectArray<TextureCacheSize> textures;
+
+    bool init(const bool hashless_texture_cache, const fs::path &texture_folder, const std::string_view game_id);
+    void select(size_t index, const SceGxmTexture &texture) override;
+    void configure_texture(const SceGxmTexture &texture) override;
+    void upload_texture_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, uint32_t pixels_per_stride) override;
+
+    void import_configure_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, bool is_srgb, uint16_t nb_components, uint16_t mipcount, bool swap_rb) override;
 };
 
 struct GLRenderTarget;

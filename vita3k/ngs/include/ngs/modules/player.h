@@ -1,4 +1,4 @@
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <codec/state.h>
 #include <ngs/system.h>
 #include <ngs/types.h>
 
@@ -64,20 +65,6 @@ struct SceNgsPlayerParams {
     SceNgsParamsDescriptor descriptor;
     SceNgsPlayerBufferParams buffer_params[SCE_NGS_PLAYER_MAX_BUFFERS];
     SceFloat32 playback_frequency;
-
-    /**
-     * @brief Controls playback rate scaling
-     * @details A scaling factor of 1 keeps the playback rate without changes.
-     * A value greater than 1 increases the playback rate, as well as the perceived
-     * speed of the audio and the pitch.
-     * A value lower than 1 decreases the playback rate, as well as the perceived
-     * speed of the audio and the pitch.
-     * The final playback rate compared to the original one will be the result of
-     * `playback_rate * scaling_factor`.
-     *
-     * Please note that this has nothing to do with the playback rate of the host audio
-     * stream.
-     */
     SceFloat32 playback_scalar;
     SceInt32 lead_in_samples;
     SceInt32 limit_number_of_samples_played;
@@ -104,7 +91,7 @@ private:
 public:
     bool process(KernelState &kern, const MemState &mem, const SceUID thread_id, ModuleData &data, std::unique_lock<std::recursive_mutex> &scheduler_lock, std::unique_lock<std::mutex> &voice_lock) override;
     uint32_t module_id() const override { return 0x5CE6; }
-    void on_state_change(ModuleData &v, const VoiceState previous) override;
+    void on_state_change(const MemState &mem, ModuleData &v, const VoiceState previous) override;
     void on_param_change(const MemState &mem, ModuleData &data) override;
 
     static constexpr uint32_t get_max_parameter_size() {

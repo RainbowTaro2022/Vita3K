@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,12 +15,14 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceRtcUser.h"
+#include "../SceRtc/SceRtc.h"
+#include <module/module.h>
 
 #include <rtc/rtc.h>
 
 #include <util/safe_time.h>
 
+#include <algorithm>
 #include <chrono>
 
 #include <util/tracy.h>
@@ -122,8 +124,7 @@ EXPORT(int, sceRtcFormatRFC2822LocalTime, char *pszDateTime, const SceRtcTick *u
     const auto tz_hour_diff = local_tz_hour - gmt_tz_hour;
 
     if (utc) { // format utc in localtime
-        SceDateTime date;
-        memset(&date, 0, sizeof(date));
+        SceDateTime date{};
         tm gmt = {};
         __RtcTicksToPspTime(&date, utc->tick);
         __RtcPspTimeToTm(&gmt, &date);
@@ -257,7 +258,8 @@ EXPORT(int, sceRtcGetDayOfWeek, int year, int month, int day) {
     }
 
     // https://en.wikipedia.org/wiki/Determination_of_the_day_of_the_week#Implementation-dependent_methods
-    int weekday = (day += month < 3 ? year-- : year - 2, 23 * month / 9 + day + 4 + year / 4 - year / 100 + year / 400) % 7;
+    day += month < 3 ? year-- : year - 2;
+    int weekday = (23 * month / 9 + day + 4 + year / 4 - year / 100 + year / 400) % 7;
     return weekday;
 }
 
@@ -445,7 +447,7 @@ EXPORT(int, sceRtcSetWin32FileTime) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceRtcTickAddDays, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceLong64 lAdd) {
+EXPORT(int, sceRtcTickAddDays, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceInt lAdd) {
     TRACY_FUNC(sceRtcTickAddDays, pTick0, pTick1, lAdd);
     if (pTick0 == nullptr || pTick1 == nullptr) {
         return RET_ERROR(SCE_RTC_ERROR_INVALID_POINTER);
@@ -455,7 +457,7 @@ EXPORT(int, sceRtcTickAddDays, SceRtcTick *pTick0, const SceRtcTick *pTick1, Sce
     return 0;
 }
 
-EXPORT(int, sceRtcTickAddHours, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceLong64 lAdd) {
+EXPORT(int, sceRtcTickAddHours, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceInt lAdd) {
     TRACY_FUNC(sceRtcTickAddHours, pTick0, pTick1, lAdd);
     if (pTick0 == nullptr || pTick1 == nullptr) {
         return RET_ERROR(SCE_RTC_ERROR_INVALID_POINTER);
@@ -500,9 +502,8 @@ EXPORT(int, sceRtcTickAddMonths, SceRtcTick *pTick0, const SceRtcTick *pTick1, S
     t.month = months % 12 + 1;
     if (t.year == 0)
         return RET_ERROR(SCE_RTC_ERROR_INVALID_YEAR);
-    int days_in_month = CALL_EXPORT(sceRtcGetDaysInMonth, t.year, t.month);
-    if (t.day > days_in_month)
-        t.day = days_in_month;
+    auto days_in_month = CALL_EXPORT(sceRtcGetDaysInMonth, t.year, t.month);
+    t.day = std::min<decltype(t.day)>(t.day, days_in_month);
     pTick0->tick = __RtcPspTimeToTicks(&t);
     return 0;
 }
@@ -527,7 +528,7 @@ EXPORT(int, sceRtcTickAddTicks, SceRtcTick *pTick0, const SceRtcTick *pTick1, Sc
     return 0;
 }
 
-EXPORT(int, sceRtcTickAddWeeks, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceLong64 lAdd) {
+EXPORT(int, sceRtcTickAddWeeks, SceRtcTick *pTick0, const SceRtcTick *pTick1, SceInt lAdd) {
     TRACY_FUNC(sceRtcTickAddWeeks, pTick0, pTick1, lAdd);
     if (pTick0 == nullptr || pTick1 == nullptr) {
         return RET_ERROR(SCE_RTC_ERROR_INVALID_POINTER);
@@ -556,48 +557,3 @@ EXPORT(int, sceRtcTickAddYears, SceRtcTick *pTick0, const SceRtcTick *pTick1, Sc
     pTick0->tick = __RtcPspTimeToTicks(&t);
     return 0;
 }
-
-BRIDGE_IMPL(sceRtcCheckValid)
-BRIDGE_IMPL(sceRtcCompareTick)
-BRIDGE_IMPL(sceRtcConvertLocalTimeToUtc)
-BRIDGE_IMPL(sceRtcConvertUtcToLocalTime)
-BRIDGE_IMPL(sceRtcFormatRFC2822)
-BRIDGE_IMPL(sceRtcFormatRFC2822LocalTime)
-BRIDGE_IMPL(sceRtcFormatRFC3339)
-BRIDGE_IMPL(sceRtcFormatRFC3339LocalTime)
-BRIDGE_IMPL(sceRtcGetCurrentAdNetworkTick)
-BRIDGE_IMPL(sceRtcGetCurrentClock)
-BRIDGE_IMPL(sceRtcGetCurrentClockLocalTime)
-BRIDGE_IMPL(sceRtcGetCurrentDebugNetworkTick)
-BRIDGE_IMPL(sceRtcGetCurrentGpsTick)
-BRIDGE_IMPL(sceRtcGetCurrentNetworkTick)
-BRIDGE_IMPL(sceRtcGetCurrentRetainedNetworkTick)
-BRIDGE_IMPL(sceRtcGetCurrentTick)
-BRIDGE_IMPL(sceRtcGetDayOfWeek)
-BRIDGE_IMPL(sceRtcGetDayOfYear)
-BRIDGE_IMPL(sceRtcGetDaysInMonth)
-BRIDGE_IMPL(sceRtcGetDosTime)
-BRIDGE_IMPL(sceRtcGetLastAdjustedTick)
-BRIDGE_IMPL(sceRtcGetLastReincarnatedTick)
-BRIDGE_IMPL(sceRtcGetTick)
-BRIDGE_IMPL(sceRtcGetTickResolution)
-BRIDGE_IMPL(sceRtcGetTime64_t)
-BRIDGE_IMPL(sceRtcGetTime_t)
-BRIDGE_IMPL(sceRtcGetWin32FileTime)
-BRIDGE_IMPL(sceRtcIsLeapYear)
-BRIDGE_IMPL(sceRtcParseDateTime)
-BRIDGE_IMPL(sceRtcParseRFC3339)
-BRIDGE_IMPL(sceRtcSetDosTime)
-BRIDGE_IMPL(sceRtcSetTick)
-BRIDGE_IMPL(sceRtcSetTime64_t)
-BRIDGE_IMPL(sceRtcSetTime_t)
-BRIDGE_IMPL(sceRtcSetWin32FileTime)
-BRIDGE_IMPL(sceRtcTickAddDays)
-BRIDGE_IMPL(sceRtcTickAddHours)
-BRIDGE_IMPL(sceRtcTickAddMicroseconds)
-BRIDGE_IMPL(sceRtcTickAddMinutes)
-BRIDGE_IMPL(sceRtcTickAddMonths)
-BRIDGE_IMPL(sceRtcTickAddSeconds)
-BRIDGE_IMPL(sceRtcTickAddTicks)
-BRIDGE_IMPL(sceRtcTickAddWeeks)
-BRIDGE_IMPL(sceRtcTickAddYears)

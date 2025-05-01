@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceLibRng.h"
+#include <module/module.h>
 
 #include <algorithm>
 #include <kernel/types.h>
@@ -47,8 +47,6 @@ EXPORT(int, sceKernelGetRandomNumber, uint64_t *output, unsigned int size) {
 
     uint64_t value = rng();
     char *ptr = reinterpret_cast<char *>(&value);
-    std::copy(ptr, ptr + remain, reinterpret_cast<char *>(&output[repeat]));
+    std::copy_n(ptr, remain, reinterpret_cast<char *>(&output[repeat]));
     return SCE_KERNEL_OK;
 }
-
-BRIDGE_IMPL(sceKernelGetRandomNumber)

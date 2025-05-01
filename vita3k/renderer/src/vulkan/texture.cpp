@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,29 +22,50 @@
 #include <vulkan/vulkan_format_traits.hpp>
 
 #include <gxm/functions.h>
+#include <gxm/types.h>
 #include <renderer/functions.h>
 #include <util/align.h>
 #include <vkutil/vkutil.h>
 
 namespace renderer::vulkan {
-VKTextureCacheState::VKTextureCacheState(VKState &state)
+
+// return if this format can be used to read a depth stencil buffer
+// Only return the formats we support and make sense for now
+// (technically we can read a D24S8 or D32 as R8R8R8R8, but it is not implemented
+// yet and no game I am aware of does it)
+static bool is_depth_stencil_compatible_format(SceGxmTextureBaseFormat format) {
+    switch (format) {
+        // 8bit stencil
+    case SCE_GXM_TEXTURE_BASE_FORMAT_U8:
+    case SCE_GXM_TEXTURE_BASE_FORMAT_S8:
+        // D16 format
+    case SCE_GXM_TEXTURE_BASE_FORMAT_U16:
+        // D32 format
+    case SCE_GXM_TEXTURE_BASE_FORMAT_F32:
+        // D32M format
+    case SCE_GXM_TEXTURE_BASE_FORMAT_F32M:
+        // D24S8 format
+    case SCE_GXM_TEXTURE_BASE_FORMAT_X8U24:
+        return true;
+    default:
+        return false;
+    }
+}
+
+VKTextureCache::VKTextureCache(VKState &state)
     : state(state) {}
 
-void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config,
-    const std::string &base_path, const std::string &title_id) {
+void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config) {
     // why are we doing this here?
     // well textures are synced right before the draw
     // in particular, we know that the scissor is the correct one for the upcoming draw
     // and the texture copy needs to be in the correct prerender command for it to render fine
     // so start a new recording right now if the macroblock has changed
-    context.check_for_macroblock_change();
+    context.check_for_macroblock_change(false);
 
-    Address data_addr = texture.data_addr << 2;
     bool is_vertex = index >= SCE_GXM_MAX_TEXTURE_UNITS;
 
-    const size_t texture_size = renderer::texture::texture_size(texture);
-
-    const SceGxmTextureFormat format = gxm::get_format(&texture);
+    const SceGxmTextureFormat format = gxm::get_format(texture);
     const SceGxmTextureBaseFormat base_format = gxm::get_base_format(format);
     if (gxm::is_paletted_format(base_format) && texture.palette_addr == 0) {
         LOG_WARN("Ignoring null palette texture");
@@ -58,73 +79,45 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
         context.shader_hints.fragment_textures[index] = format;
     }
 
-    vkutil::Image *image = nullptr;
+    std::optional<TextureLookupResult> lookup_result = std::nullopt;
 
     SceGxmColorBaseFormat format_target_of_texture;
 
-    uint16_t width = static_cast<std::uint16_t>(gxm::get_width(&texture));
-    uint16_t height = static_cast<std::uint16_t>(gxm::get_height(&texture));
+    TextureViewport texture_viewport{};
 
     if (renderer::texture::convert_base_texture_format_to_base_color_format(base_format, format_target_of_texture)) {
-        uint16_t stride_in_pixels = width;
-
-        SceGxmColorSurfaceType surface_type = SCE_GXM_COLOR_SURFACE_LINEAR;
-        switch (texture.texture_type()) {
-        case SCE_GXM_TEXTURE_LINEAR_STRIDED:
-            stride_in_pixels = static_cast<uint16_t>(gxm::get_stride_in_bytes(&texture)) / ((renderer::texture::bits_per_pixel(base_format) + 7) >> 3);
-            break;
-        case SCE_GXM_TEXTURE_LINEAR:
-            // when the texture is linear, the stride should be aligned to 8 pixels
-            stride_in_pixels = align(stride_in_pixels, 8);
-            break;
-        case SCE_GXM_TEXTURE_TILED:
-            // tiles are 32x32
-            stride_in_pixels = align(stride_in_pixels, 32);
-            surface_type = SCE_GXM_COLOR_SURFACE_TILED;
-            break;
-        case SCE_GXM_TEXTURE_SWIZZLED:
-        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-            surface_type = SCE_GXM_COLOR_SURFACE_SWIZZLED;
-        }
-
-        vk::ComponentMapping swizzle = texture::translate_swizzle(format);
-
-        image = context.state.surface_cache.retrieve_color_surface_texture_handle(
-            mem, width, height, stride_in_pixels, format_target_of_texture, surface_type, static_cast<bool>(texture.gamma_mode), Ptr<void>(data_addr),
-            renderer::SurfaceTextureRetrievePurpose::READING, swizzle);
+        // try to retrieve it from the color surface cache
+        lookup_result = context.state.surface_cache.retrieve_color_surface_as_texture(texture, format_target_of_texture, &texture_viewport);
     }
 
-    vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    if (image) {
-        layout = vk::ImageLayout::eGeneral;
+    if (!lookup_result.has_value() && is_depth_stencil_compatible_format(base_format)) {
+        // Try to retrieve depth/stencil cache
+        lookup_result = context.state.surface_cache.retrieve_depth_stencil_as_texture(texture, &texture_viewport);
+    }
+
+    if (lookup_result.has_value()) {
+        // get the sampler now
+        context.state.texture_cache.cache_and_bind_sampler(texture);
     } else {
-        // Try to retrieve S24D8 texture
-        SceGxmDepthStencilSurface lookup_temp;
-        lookup_temp.depthData = data_addr;
-        lookup_temp.stencilData.reset();
-
-        image = context.state.surface_cache.retrieve_depth_stencil_texture_handle(mem, lookup_temp, width, height, true);
+        context.state.texture_cache.cache_and_bind_texture(texture, mem);
+        auto &image = context.state.texture_cache.current_texture->texture;
+        lookup_result = TextureLookupResult{
+            image.view,
+            image.layout,
+            image.format
+        };
     }
 
-    if (image) {
-        if (!image->sampler)
-            image->sampler = texture::create_sampler(context.state, texture);
-    } else {
-        if (!is_valid_addr_range(mem, data_addr, data_addr + texture_size)) {
-            LOG_WARN("Texture has freed data.");
-            return;
-        }
-        renderer::texture::cache_and_bind_texture(context.state.texture_cache, texture, mem);
-        image = &context.state.texture_cache.current_texture->texture;
-    }
+    const vk::ImageLayout layout = vkutil::get_underlying_layout(lookup_result->layout);
+    const vk::Sampler sampler = context.state.texture_cache.get_retrieved_sampler();
 
     vk::DescriptorImageInfo &image_info = is_vertex
         ? context.vertex_textures[index - SCE_GXM_MAX_TEXTURE_UNITS]
         : context.fragment_textures[index];
-    if (image_info.sampler != image->sampler || image_info.imageView != image->view) {
+    if (image_info.sampler != sampler || image_info.imageView != lookup_result->view) {
         image_info = vk::DescriptorImageInfo{
-            .sampler = image->sampler,
-            .imageView = image->view,
+            .sampler = sampler,
+            .imageView = lookup_result->view,
             .imageLayout = layout
         };
         // invalidate last descriptor set
@@ -133,9 +126,19 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
         else
             context.last_frag_texture_count = ~0;
     }
+
+    if (context.state.features.use_texture_viewport) {
+        if (is_vertex) {
+            context.curr_vert_ublock.set_viewport_ratio(index - SCE_GXM_MAX_TEXTURE_UNITS, texture_viewport.ratio);
+            context.curr_vert_ublock.set_viewport_offset(index - SCE_GXM_MAX_TEXTURE_UNITS, texture_viewport.offset);
+        } else {
+            context.curr_frag_ublock.set_viewport_ratio(index, texture_viewport.ratio);
+            context.curr_frag_ublock.set_viewport_offset(index, texture_viewport.offset);
+        }
+    }
 }
 
-void VKTextureCacheState::prepare_staging_buffer(bool is_configure) {
+void VKTextureCache::prepare_staging_buffer(bool is_configure) {
     assert(!is_texture_transfer_ready);
     VKContext *context = reinterpret_cast<VKContext *>(state.context);
 
@@ -238,33 +241,21 @@ void VKTextureCacheState::prepare_staging_buffer(bool is_configure) {
     is_texture_transfer_ready = true;
 }
 
-namespace texture {
+bool VKTextureCache::init(const bool hashless_texture_cache, const fs::path &texture_folder, const std::string_view game_id) {
+    // set a limit to the number of samplers which can be allocated at the same time
+    const size_t max_sampler_used = std::min(state.physical_device_properties.limits.maxSamplerAllocationCount / 2, 512U);
 
-bool init(VKTextureCacheState &cache, const bool hashless_texture_cache) {
-    cache.select_callback = [&cache](const std::size_t index, const void *texture) {
-        cache.current_texture = &cache.textures[index];
-        cache.is_texture_transfer_ready = false;
-    };
+    TextureCache::init(hashless_texture_cache, texture_folder, game_id, max_sampler_used);
+    backend = Backend::Vulkan;
 
-    cache.configure_texture_callback = [&cache](const renderer::TextureCacheState &text_cache, const void *texture) {
-        configure_bound_texture(cache, *reinterpret_cast<const SceGxmTexture *>(texture));
-    };
-
-    cache.upload_texture_callback = [&cache](SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, bool is_compressed, size_t pixels_per_stride) {
-        upload_bound_texture(cache, base_format, width, height, mip_index, pixels, face, is_compressed, pixels_per_stride);
-    };
-
-    cache.upload_done_callback = [&cache]() {
-        upload_done(cache);
-    };
-
-    cache.use_protect = hashless_texture_cache;
-
-    // don't forget to specify the allocator for all the staging buffers
-    for (int i = 0; i < NB_TEXTURE_STAGING_BUFFERS; i++)
-        cache.staging_buffers[i].buffer.allocator = cache.state.allocator;
+    samplers.resize(max_sampler_used);
 
     return true;
+}
+
+void VKTextureCache::select(size_t index, const SceGxmTexture &texture) {
+    current_texture = &textures[index];
+    is_texture_transfer_ready = false;
 }
 
 static vk::Format linear_to_srgb(const vk::Format format) {
@@ -281,10 +272,10 @@ static vk::Format linear_to_srgb(const vk::Format format) {
         return vk::Format::eBc2SrgbBlock;
     case vk::Format::eBc3UnormBlock:
         return vk::Format::eBc3SrgbBlock;
+    case vk::Format::eBc7UnormBlock:
+        return vk::Format::eBc7SrgbBlock;
     default: {
-        static bool has_happened = false;
-        LOG_WARN_IF(!has_happened, "Trying to use gamma correction with non-compatible format {}", vk::to_string(format));
-        has_happened = true;
+        LOG_WARN_ONCE("Trying to use gamma correction with non-compatible format {}", vk::to_string(format));
         return format;
     }
     }
@@ -295,43 +286,38 @@ static vk::Format linear_to_srgb(const vk::Format format) {
 static uint32_t get_image_memory_upper_bound(const SceGxmTexture &gxm_texture, const vk::Format vk_format, const SceGxmTextureBaseFormat base_format) {
     // we only want an upper bound, it doesn't matter if because of some conversions we later get the width instead of the stride
     // aligning to 8 takes care of the default stride values
-    uint32_t stride = align(gxm::get_width(&gxm_texture), 8);
-    uint32_t height = align(gxm::get_height(&gxm_texture), 8);
+    uint32_t stride = std::max(next_power_of_two(gxm::get_width(gxm_texture)), 8U);
+    uint32_t height = std::max(next_power_of_two(gxm::get_height(gxm_texture)), 8U);
 
     if (gxm_texture.texture_type() == SCE_GXM_TEXTURE_LINEAR_STRIDED) {
-        const uint32_t bpp = (renderer::texture::bits_per_pixel(base_format) + 7) / 8;
+        const uint32_t bpp = (gxm::bits_per_pixel(base_format) + 7) / 8;
         // the max is to handle the case of P4 textures
-        stride = std::max<uint32_t>(stride, gxm::get_stride_in_bytes(&gxm_texture) / bpp);
+        stride = std::max<uint32_t>(stride, gxm::get_stride_in_bytes(gxm_texture) / bpp);
     }
 
     return ((stride * height) / vk::texelsPerBlock(vk_format)) * vk::blockSize(vk_format);
 }
 
-void configure_bound_texture(VKTextureCacheState &cache, const SceGxmTexture &gxm_texture) {
-    const SceGxmTextureFormat format = gxm::get_format(&gxm_texture);
+void VKTextureCache::configure_texture(const SceGxmTexture &gxm_texture) {
+    const SceGxmTextureFormat format = gxm::get_format(gxm_texture);
     const SceGxmTextureBaseFormat base_format = gxm::get_base_format(format);
 
-    const vk::ComponentMapping swizzle = translate_swizzle(format);
+    const vk::ComponentMapping swizzle = texture::translate_swizzle(format);
 
     const bool is_cube = (gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE || gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
 
-    uint32_t width = static_cast<uint32_t>(gxm::get_width(&gxm_texture));
-    uint32_t height = static_cast<uint32_t>(gxm::get_height(&gxm_texture));
-    if (gxm::is_block_compressed_format(base_format)) {
-        // align width and height to block size
-        width = align(width, 4);
-        height = align(height, 4);
-    }
+    uint32_t width = gxm::get_width(gxm_texture);
+    uint32_t height = gxm::get_height(gxm_texture);
 
-    const uint16_t mip_count = renderer::texture::get_upload_mip(gxm_texture.true_mip_count(), width, height, base_format);
+    const uint16_t mip_count = renderer::texture::get_upload_mip(gxm_texture.true_mip_count(), width, height);
 
-    vk::Format vk_format = translate_format(base_format);
+    vk::Format vk_format = texture::translate_format(base_format);
     if (gxm_texture.gamma_mode) {
         vk_format = linear_to_srgb(vk_format);
     }
 
-    cache.current_texture->mip_count = mip_count;
-    cache.current_texture->is_cube = is_cube;
+    current_texture->mip_count = mip_count;
+    current_texture->is_cube = is_cube;
     uint32_t memory_needed = get_image_memory_upper_bound(gxm_texture, vk_format, base_format);
     if (mip_count > 1)
         // using mips, the overall memory needed will be 4/3 of the base memory
@@ -339,11 +325,15 @@ void configure_bound_texture(VKTextureCacheState &cache, const SceGxmTexture &gx
         memory_needed += memory_needed / 2;
     if (is_cube)
         memory_needed *= 6;
-    cache.current_texture->memory_needed = align(memory_needed, 16);
-    vkutil::Image &image = cache.current_texture->texture;
+    current_texture->memory_needed = align(memory_needed, 16);
+    vkutil::Image &image = current_texture->texture;
+
+    // In case the cache is full, no need to put the previous image in the destroy queue
+    // because of texture importation, we must be careful when destroying an image
+    if (image.image)
+        state.frame().destroy_queue.add_image(image);
 
     // manually initialize the image
-    image.allocator = cache.state.allocator;
     image.width = width;
     image.height = height;
     image.format = vk_format;
@@ -366,7 +356,7 @@ void configure_bound_texture(VKTextureCacheState &cache, const SceGxmTexture &gx
         .initialLayout = vk::ImageLayout::eUndefined,
     };
 
-    std::tie(image.image, image.allocation) = image.allocator.createImage(image_info, vkutil::vma_auto_alloc);
+    std::tie(image.image, image.allocation) = state.allocator.createImage(image_info, vkutil::vma_auto_alloc);
 
     // create image view
     vk::ImageSubresourceRange range{
@@ -384,49 +374,19 @@ void configure_bound_texture(VKTextureCacheState &cache, const SceGxmTexture &gx
         .components = swizzle,
         .subresourceRange = range
     };
-    image.view = cache.state.device.createImageView(view_info);
+    image.view = state.device.createImageView(view_info);
 
-    image.sampler = create_sampler(cache.state, gxm_texture, mip_count);
+    if (!gxm_texture.normalize_mode)
+        LOG_ERROR("Unhandled unnormalized texture, please report it to the developers");
 
-    cache.prepare_staging_buffer(true);
-}
-
-vk::Sampler create_sampler(VKState &state, const SceGxmTexture &gxm_texture, const uint16_t mip_count) {
-    const SceGxmTextureAddrMode uaddr = static_cast<SceGxmTextureAddrMode>(gxm_texture.uaddr_mode);
-    const SceGxmTextureAddrMode vaddr = static_cast<SceGxmTextureAddrMode>(gxm_texture.vaddr_mode);
-    const SceGxmTextureFilter min_filter = static_cast<SceGxmTextureFilter>(gxm_texture.min_filter);
-    const SceGxmTextureFilter mag_filter = static_cast<SceGxmTextureFilter>(gxm_texture.mag_filter);
-    const bool mipmap_enabled = static_cast<bool>(gxm_texture.mip_filter);
-
-    // create sampler
-    vk::SamplerCreateInfo sampler_info{
-        .magFilter = translate_filter(mag_filter),
-        .minFilter = translate_filter(min_filter),
-        .mipmapMode = translate_mimpmap_mode(min_filter),
-        .addressModeU = translate_address_mode(uaddr),
-        .addressModeV = translate_address_mode(vaddr),
-        .addressModeW = vk::SamplerAddressMode::eRepeat,
-        .mipLodBias = (static_cast<float>(gxm_texture.lod_bias) - 31.f) / 8.f,
-        .maxAnisotropy = static_cast<float>(state.texture_cache.anisotropic_filtering),
-        .compareEnable = VK_FALSE,
-        .minLod = mipmap_enabled ? static_cast<float>(std::min<uint16_t>(mip_count, gxm_texture.lod_min0 | (gxm_texture.lod_min1 << 2))) : 0.f,
-        // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkSamplerCreateInfo.html
-        // if there is no mipmap, set maxLod to 0.25 so it uses both the magnification or minification filter when needed
-        .maxLod = mipmap_enabled ? static_cast<float>(mip_count) : 0.25f,
-        .unnormalizedCoordinates = VK_FALSE,
-    };
-
-    // when using nearest filter, disable anisotropy as the pixels can contain data other than color
-    sampler_info.anisotropyEnable = (state.texture_cache.anisotropic_filtering > 1) && (sampler_info.magFilter != vk::Filter::eNearest || sampler_info.minFilter != vk::Filter::eNearest);
-
-    return state.device.createSampler(sampler_info);
+    prepare_staging_buffer(true);
 }
 
 // add an alpha channel to u8u8u8 textures
 static void *add_alpha_channel(const void *pixels, const uint32_t width, const uint32_t height, std::vector<uint8_t> &data) {
     data.resize(width * height * 4);
 
-    const uint8_t *src = reinterpret_cast<const uint8_t *>(pixels);
+    const uint8_t *src = static_cast<const uint8_t *>(pixels);
     uint8_t *dst = data.data();
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
@@ -444,13 +404,13 @@ static void *add_alpha_channel(const void *pixels, const uint32_t width, const u
     return data.data();
 }
 
-void upload_bound_texture(VKTextureCacheState &cache, SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height,
-    uint32_t mip_index, const void *pixels, int face, bool is_compressed, size_t pixels_per_stride) {
-    if (!cache.is_texture_transfer_ready)
-        cache.prepare_staging_buffer();
+void VKTextureCache::upload_texture_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height,
+    uint32_t mip_index, const void *pixels, int face, uint32_t pixels_per_stride) {
+    if (!is_texture_transfer_ready)
+        prepare_staging_buffer();
 
-    vkutil::Image &image = cache.current_texture->texture;
-    TextureStagingBuffer &staging_buffer = cache.staging_buffers[cache.staging_idx];
+    vkutil::Image &image = current_texture->texture;
+    TextureStagingBuffer &staging_buffer = staging_buffers[staging_idx];
 
     if (face > 0)
         face--;
@@ -466,10 +426,13 @@ void upload_bound_texture(VKTextureCacheState &cache, SceGxmTextureBaseFormat ba
     }
 
     vk::DeviceSize upload_size;
-    if (is_compressed) {
-        upload_size = renderer::texture::get_compressed_size(base_format, width, height);
+    uint32_t buffer_height = height;
+    if (gxm::is_bcn_format(base_format)) {
+        upload_size = renderer::texture::get_compressed_size(base_format, pixels_per_stride, height);
+        pixels_per_stride = align(pixels_per_stride, 4);
+        buffer_height = align(buffer_height, 4);
     } else {
-        size_t bpp = renderer::texture::bits_per_pixel(base_format);
+        size_t bpp = gxm::bits_per_pixel(base_format);
         size_t bytes_per_pixel = (bpp + 7) >> 3;
         upload_size = pixels_per_stride * height * bytes_per_pixel;
     }
@@ -479,7 +442,7 @@ void upload_bound_texture(VKTextureCacheState &cache, SceGxmTextureBaseFormat ba
         return;
     }
 
-    memcpy(reinterpret_cast<uint8_t *>(staging_buffer.buffer.mapped_data) + staging_buffer.used_so_far, text_data, upload_size);
+    memcpy(static_cast<uint8_t *>(staging_buffer.buffer.mapped_data) + staging_buffer.used_so_far, text_data, upload_size);
 
     vk::ImageSubresourceLayers layer{
         .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -489,30 +452,160 @@ void upload_bound_texture(VKTextureCacheState &cache, SceGxmTextureBaseFormat ba
     };
     vk::BufferImageCopy region{
         .bufferOffset = staging_buffer.used_so_far,
-        .bufferRowLength = static_cast<uint32_t>(pixels_per_stride),
-        .bufferImageHeight = height,
+        .bufferRowLength = pixels_per_stride,
+        .bufferImageHeight = buffer_height,
         .imageSubresource = layer,
         .imageOffset = { 0, 0, 0 },
         .imageExtent = { width, height, 1 }
     };
-    cache.cmd_buffer.copyBufferToImage(staging_buffer.buffer.buffer, image.image, vk::ImageLayout::eTransferDstOptimal, region);
+    cmd_buffer.copyBufferToImage(staging_buffer.buffer.buffer, image.image, vk::ImageLayout::eTransferDstOptimal, region);
     staging_buffer.used_so_far += upload_size;
 }
 
-void upload_done(VKTextureCacheState &cache) {
+void VKTextureCache::upload_done() {
     // transition the texture back to read only
     vk::ImageSubresourceRange range{
         .aspectMask = vk::ImageAspectFlagBits::eColor,
         .baseMipLevel = 0,
-        .levelCount = cache.current_texture->mip_count,
+        .levelCount = current_texture->mip_count,
         .baseArrayLayer = 0,
-        .layerCount = cache.current_texture->is_cube ? 6U : 1U
+        .layerCount = current_texture->is_cube ? 6U : 1U
     };
-    vkutil::transition_image_layout(cache.cmd_buffer, cache.current_texture->texture.image, vkutil::ImageLayout::TransferDst, vkutil::ImageLayout::SampledImage, range);
+    vkutil::transition_image_layout(cmd_buffer, current_texture->texture.image, vkutil::ImageLayout::TransferDst, vkutil::ImageLayout::SampledImage, range);
+    current_texture->texture.layout = vkutil::ImageLayout::SampledImage;
     // this should not be necessary
-    cache.cmd_buffer = nullptr;
-    cache.is_texture_transfer_ready = false;
+    cmd_buffer = nullptr;
+    is_texture_transfer_ready = false;
 }
-} // namespace texture
+
+void VKTextureCache::configure_sampler(size_t index, const SceGxmTexture &texture) {
+    vk::Sampler &sampler = samplers[index];
+    if (sampler) {
+        // the previous one has not been used for a while, we can destroy it
+        state.device.destroy(sampler);
+    }
+
+    // linear strided textures use the mag filter as the min filter too
+    const bool is_linear_strided = texture.texture_type() == SCE_GXM_TEXTURE_LINEAR_STRIDED;
+
+    const SceGxmTextureAddrMode uaddr = static_cast<SceGxmTextureAddrMode>(texture.uaddr_mode);
+    const SceGxmTextureAddrMode vaddr = static_cast<SceGxmTextureAddrMode>(texture.vaddr_mode);
+    // Note: I don't know what to do with the MIPMAP version of SceGxmTextureFilter
+    const SceGxmTextureFilter mag_filter = static_cast<SceGxmTextureFilter>(texture.mag_filter);
+    const SceGxmTextureFilter min_filter = is_linear_strided ? mag_filter : static_cast<SceGxmTextureFilter>(texture.min_filter);
+
+    // create sampler
+    vk::SamplerCreateInfo sampler_info{
+        .magFilter = texture::translate_filter(mag_filter),
+        .minFilter = texture::translate_filter(min_filter),
+        .mipmapMode = texture.mip_filter ? vk::SamplerMipmapMode::eLinear : vk::SamplerMipmapMode::eNearest,
+        .addressModeU = texture::translate_address_mode(uaddr),
+        .addressModeV = texture::translate_address_mode(vaddr),
+        .addressModeW = vk::SamplerAddressMode::eRepeat,
+        .mipLodBias = (static_cast<float>(texture.lod_bias) - 31.f) / 8.f,
+        .maxAnisotropy = static_cast<float>(anisotropic_filtering),
+        .compareEnable = VK_FALSE,
+        .minLod = static_cast<float>(texture.lod_min0 | (texture.lod_min1 << 2)),
+        .maxLod = VK_LOD_CLAMP_NONE,
+        .unnormalizedCoordinates = VK_FALSE,
+    };
+
+    // when using nearest filter, disable anisotropy as the pixels can contain data other than color
+    sampler_info.anisotropyEnable = (anisotropic_filtering > 1) && (sampler_info.magFilter != vk::Filter::eNearest || sampler_info.minFilter != vk::Filter::eNearest);
+
+    sampler = state.device.createSampler(sampler_info);
+}
+
+void VKTextureCache::import_configure_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, bool is_srgb, uint16_t nb_components, uint16_t mipcount, bool swap_rb) {
+    const size_t bpp = gxm::bits_per_pixel(base_format);
+    const uint32_t texture_size = align(width, 4) * align(height, 4) * bpp / 8;
+    current_texture->memory_needed = align(texture_size, 16);
+
+    current_texture->mip_count = mipcount;
+    if (mipcount > 1)
+        current_texture->memory_needed += current_texture->memory_needed / 2;
+
+    const bool is_cube = current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE || current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY;
+    current_texture->is_cube = is_cube;
+    if (is_cube)
+        current_texture->memory_needed *= 6;
+
+    vkutil::Image &image = current_texture->texture;
+    // In case the cache is full, no need to put the previous image in the destroy queue
+    // because of texture importation, we must be careful when destroying an image
+    if (image.image)
+        state.frame().destroy_queue.add_image(image);
+
+    vk::Format vk_format = texture::translate_format(base_format);
+    if (is_srgb)
+        vk_format = linear_to_srgb(vk_format);
+
+    // manually initialize the image
+    image.width = width;
+    image.height = height;
+    image.format = vk_format;
+
+    // create image
+    vk::ImageCreateInfo image_info{
+        .flags = is_cube ? vk::ImageCreateFlagBits::eCubeCompatible : vk::ImageCreateFlags(),
+        .imageType = vk::ImageType::e2D,
+        .format = vk_format,
+        .extent = vk::Extent3D{
+            .width = width,
+            .height = height,
+            .depth = 1 },
+        .mipLevels = mipcount,
+        .arrayLayers = is_cube ? 6U : 1U,
+        .samples = vk::SampleCountFlagBits::e1,
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+        .sharingMode = vk::SharingMode::eExclusive,
+        .initialLayout = vk::ImageLayout::eUndefined,
+    };
+
+    std::tie(image.image, image.allocation) = state.allocator.createImage(image_info, vkutil::vma_auto_alloc);
+
+    // create image view
+    vk::ImageSubresourceRange range{
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = mipcount,
+        .baseArrayLayer = 0,
+        .layerCount = is_cube ? 6U : 1U
+    };
+
+    vk::ComponentMapping swizzle{ vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA };
+    if (nb_components == 3) {
+        swizzle.a = vk::ComponentSwizzle::eOne;
+    } else if (nb_components <= 2) {
+        // use the real swizzle
+        swizzle = texture::translate_swizzle(gxm::get_format(current_info->texture));
+    }
+
+    // u5u6u5 is stored as bgr in vulkan
+    if (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_U5U6U5) {
+        swap_rb = !swap_rb;
+    }
+
+    // this format is stored as abgr in vulkan
+    if (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_U4U4U4U4) {
+        std::swap(swizzle.r, swizzle.a);
+        std::swap(swizzle.g, swizzle.b);
+    }
+
+    if (swap_rb)
+        std::swap(swizzle.r, swizzle.b);
+
+    vk::ImageViewCreateInfo view_info{
+        .image = image.image,
+        .viewType = is_cube ? vk::ImageViewType::eCube : vk::ImageViewType::e2D,
+        .format = vk_format,
+        .components = swizzle,
+        .subresourceRange = range
+    };
+    image.view = state.device.createImageView(view_info);
+
+    prepare_staging_buffer(true);
+}
 
 } // namespace renderer::vulkan

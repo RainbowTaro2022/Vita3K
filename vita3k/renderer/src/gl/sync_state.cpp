@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -110,8 +110,7 @@ static GLenum translate_stencil_func(SceGxmStencilFunc stencil_func) {
 }
 
 void sync_mask(const GLState &state, GLContext &context, const MemState &mem) {
-    auto control = context.record.depth_stencil_surface.control.content;
-    GLubyte initial_byte = (control & SceGxmDepthStencilControl::mask_bit) ? 0xFF : 0;
+    GLubyte initial_byte = context.record.depth_stencil_surface.mask ? 0xFF : 0;
 
     GLubyte clear_bytes[4] = { initial_byte, initial_byte, initial_byte, initial_byte };
     glClearTexImage(context.render_target->masktexture[0], 0, GL_RGBA, GL_UNSIGNED_BYTE, clear_bytes);
@@ -121,7 +120,8 @@ void sync_viewport_flat(const GLState &state, GLContext &context) {
     const GLsizei display_w = context.record.color_surface.width;
     const GLsizei display_h = context.record.color_surface.height;
 
-    glViewport(0, (context.current_framebuffer_height - display_h) * state.res_multiplier, display_w * state.res_multiplier, display_h * state.res_multiplier);
+    glViewport(0, static_cast<GLint>((context.current_framebuffer_height - display_h) * state.res_multiplier),
+        static_cast<GLsizei>(display_w * state.res_multiplier), static_cast<GLsizei>(display_h * state.res_multiplier));
     glDepthRange(0, 1);
 }
 
@@ -162,7 +162,8 @@ void sync_clipping(const GLState &state, GLContext &context) {
         break;
     case SCE_GXM_REGION_CLIP_OUTSIDE:
         glEnable(GL_SCISSOR_TEST);
-        glScissor(scissor_x * state.res_multiplier, scissor_y * state.res_multiplier, scissor_w * state.res_multiplier, scissor_h * state.res_multiplier);
+        glScissor(static_cast<GLint>(scissor_x * state.res_multiplier), static_cast<GLint>(scissor_y * state.res_multiplier),
+            static_cast<GLsizei>(scissor_w * state.res_multiplier), static_cast<GLsizei>(scissor_h * state.res_multiplier));
         break;
     case SCE_GXM_REGION_CLIP_INSIDE:
         // TODO: Implement SCE_GXM_REGION_CLIP_INSIDE
@@ -204,9 +205,8 @@ void sync_depth_data(const renderer::GxmRecordState &state) {
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
 
-    // If force load is enabled to load saved depth and depth data memory exists (the second condition is just for safe, may sometimes contradict its usefulness, hopefully won't)
-    if (((state.depth_stencil_surface.zlsControl & SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED) == 0) && (state.depth_stencil_surface.depthData)) {
-        glClearDepth(state.depth_stencil_surface.backgroundDepth);
+    if (!state.depth_stencil_surface.force_load) {
+        glClearDepth(state.depth_stencil_surface.background_depth);
         glClear(GL_DEPTH_BUFFER_BIT);
     }
 }
@@ -226,8 +226,8 @@ void sync_stencil_data(const GxmRecordState &state, const MemState &mem) {
     // Stencil test.
     glEnable(GL_STENCIL_TEST);
     glStencilMask(GL_TRUE);
-    if ((state.depth_stencil_surface.zlsControl & SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED) == 0) {
-        glClearStencil(state.depth_stencil_surface.control.content & SceGxmDepthStencilControl::stencil_bits);
+    if (!state.depth_stencil_surface.force_load) {
+        glClearStencil(state.depth_stencil_surface.stencil);
         glClear(GL_STENCIL_BUFFER_BIT);
     }
 }
@@ -254,11 +254,11 @@ void sync_polygon_mode(const SceGxmPolygonMode mode, const bool front) {
     }
 }
 
-void sync_point_line_width(const std::uint32_t width, const bool is_front) {
+void sync_point_line_width(const GLState &state, const std::uint32_t width, const bool is_front) {
     // Point Line Width
     if (is_front) {
-        glLineWidth(static_cast<GLfloat>(width));
-        glPointSize(static_cast<GLfloat>(width));
+        glLineWidth(width * state.res_multiplier);
+        glPointSize(width * state.res_multiplier);
     }
 }
 
@@ -270,16 +270,15 @@ void sync_depth_bias(const int factor, const int unit, const bool is_front) {
 }
 
 void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t index, SceGxmTexture texture,
-    const Config &config, const std::string &base_path, const std::string &title_id) {
+    const Config &config) {
     Address data_addr = texture.data_addr << 2;
 
-    const size_t texture_size = renderer::texture::texture_size(texture);
-    if (!is_valid_addr_range(mem, data_addr, data_addr + texture_size)) {
+    if (!is_valid_addr(mem, data_addr)) {
         LOG_WARN("Texture has freed data.");
         return;
     }
 
-    const SceGxmTextureFormat format = gxm::get_format(&texture);
+    const SceGxmTextureFormat format = gxm::get_format(texture);
     const SceGxmTextureBaseFormat base_format = gxm::get_base_format(format);
     if (gxm::is_paletted_format(base_format) && texture.palette_addr == 0) {
         LOG_WARN("Ignoring null palette texture");
@@ -303,28 +302,21 @@ void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t
         texture_as_surface = context.current_color_attachment;
         swizzle_surface = color::translate_swizzle(context.record.color_surface.colorFormat);
 
-        if (std::find(context.self_sampling_indices.begin(), context.self_sampling_indices.end(), index)
-            == context.self_sampling_indices.end()) {
-            context.self_sampling_indices.push_back(index);
-        }
+        vector_utils::push_if_not_exists(context.self_sampling_indices, index);
     } else {
-        auto res = std::find(context.self_sampling_indices.begin(), context.self_sampling_indices.end(),
-            static_cast<GLuint>(index));
-        if (res != context.self_sampling_indices.end()) {
-            context.self_sampling_indices.erase(res);
-        }
+        vector_utils::erase_first(context.self_sampling_indices, index);
 
         SceGxmColorBaseFormat format_target_of_texture;
 
-        std::uint16_t width = static_cast<std::uint16_t>(gxm::get_width(&texture));
-        std::uint16_t height = static_cast<std::uint16_t>(gxm::get_height(&texture));
+        std::uint16_t width = static_cast<std::uint16_t>(gxm::get_width(texture));
+        std::uint16_t height = static_cast<std::uint16_t>(gxm::get_height(texture));
 
         if (renderer::texture::convert_base_texture_format_to_base_color_format(base_format, format_target_of_texture)) {
             std::uint16_t stride_in_pixels = width;
 
             switch (texture.texture_type()) {
             case SCE_GXM_TEXTURE_LINEAR_STRIDED:
-                stride_in_pixels = static_cast<std::uint16_t>(gxm::get_stride_in_bytes(&texture)) / ((renderer::texture::bits_per_pixel(base_format) + 7) >> 3);
+                stride_in_pixels = static_cast<std::uint16_t>(gxm::get_stride_in_bytes(texture)) / ((gxm::bits_per_pixel(base_format) + 7) >> 3);
                 break;
             case SCE_GXM_TEXTURE_LINEAR:
                 // when the texture is linear, the stride should be aligned to 8 pixels
@@ -340,7 +332,7 @@ void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t
 
             texture_as_surface = state.surface_cache.retrieve_color_surface_texture_handle(
                 state, width, height, stride_in_pixels, format_target_of_texture, Ptr<void>(data_addr),
-                renderer::SurfaceTextureRetrievePurpose::READING, swizz_raw);
+                SurfaceTextureRetrievePurpose::READING, swizz_raw);
 
             swizzle_surface = color::translate_swizzle(static_cast<SceGxmColorFormat>(format_target_of_texture | swizz_raw));
             only_nearest = color::is_write_surface_non_linearity_filtering(format_target_of_texture);
@@ -349,8 +341,8 @@ void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t
         // Try to retrieve S24D8 texture
         if (!texture_as_surface) {
             SceGxmDepthStencilSurface lookup_temp;
-            lookup_temp.depthData = data_addr;
-            lookup_temp.stencilData.reset();
+            lookup_temp.depth_data = data_addr;
+            lookup_temp.stencil_data.reset();
 
             texture_as_surface = state.surface_cache.retrieve_depth_stencil_texture_handle(state, mem, lookup_temp, width, height, true);
             if (texture_as_surface) {
@@ -398,27 +390,10 @@ void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t
         }
     } else {
         if (config.texture_cache) {
-            renderer::texture::cache_and_bind_texture(state.texture_cache, texture, mem);
+            state.texture_cache.cache_and_bind_texture(texture, mem);
         } else {
-            texture::bind_texture(state.texture_cache, texture, mem);
+            texture::bind_texture_without_cache(state.texture_cache, texture, mem);
         }
-    }
-
-    if (config.dump_textures) {
-        auto frag_program = context.record.fragment_program.get(mem);
-        auto program = frag_program->program.get(mem);
-        const auto program_hash = sha256(program, program->size);
-
-        std::string parameter_name;
-        const auto parameters = gxp::program_parameters(*program);
-        for (uint32_t i = 0; i < program->parameter_count; ++i) {
-            const auto parameter = &parameters[i];
-            if (parameter->resource_index == index) {
-                parameter_name = gxp::parameter_name_raw(*parameter);
-                break;
-            }
-        }
-        renderer::gl::texture::dump(texture, mem, parameter_name, base_path, title_id, program_hash);
     }
 
     glActiveTexture(GL_TEXTURE0);
@@ -452,18 +427,6 @@ void sync_vertex_streams_and_attributes(GLContext &context, GxmRecordState &stat
     const SceGxmVertexProgram &vertex_program = *state.vertex_program.get(mem);
     GLVertexProgram *glvert = reinterpret_cast<GLVertexProgram *>(vertex_program.renderer_data.get());
 
-    if (!glvert->stripped_symbols_checked) {
-        // Insert some symbols here
-        const SceGxmProgram *vertex_program_body = vertex_program.program.get(mem);
-        if (vertex_program_body && (vertex_program_body->primary_reg_count != 0)) {
-            for (std::size_t i = 0; i < vertex_program.attributes.size(); i++) {
-                glvert->attribute_infos.emplace(vertex_program.attributes[i].regIndex, shader::usse::AttributeInformation(static_cast<std::uint16_t>(i), SCE_GXM_PARAMETER_TYPE_F32, false, false, false));
-            }
-        }
-
-        glvert->stripped_symbols_checked = true;
-    }
-
     // Each draw will upload the stream data. Assuming that, we can just bind buffer, upload data
     // The GXM submit side should already submit used buffer, but we just delete all just in case
     std::array<std::size_t, SCE_GXM_MAX_VERTEX_STREAMS> offset_in_buffer;
@@ -487,20 +450,18 @@ void sync_vertex_streams_and_attributes(GLContext &context, GxmRecordState &stat
     glBindBuffer(GL_ARRAY_BUFFER, context.vertex_stream_ring_buffer.handle());
 
     for (const SceGxmVertexAttribute &attribute : vertex_program.attributes) {
-        if (glvert->attribute_infos.find(attribute.regIndex) == glvert->attribute_infos.end())
+        if (!glvert->attribute_infos.contains(attribute.regIndex))
             continue;
 
         const SceGxmVertexStream &stream = vertex_program.streams[attribute.streamIndex];
 
-        const SceGxmAttributeFormat attribute_format = static_cast<SceGxmAttributeFormat>(attribute.format);
-        GLenum type = attribute_format_to_gl_type(attribute_format);
-        const GLboolean normalised = attribute_format_normalised(attribute_format);
+        GLenum type = attribute_format_to_gl_type(attribute.format);
+        const GLboolean normalized = attribute_format_normalized(attribute.format);
 
-        int attrib_location = 0;
         bool upload_integral = false;
 
         shader::usse::AttributeInformation info = glvert->attribute_infos.at(attribute.regIndex);
-        attrib_location = info.location();
+        int attrib_location = info.location;
 
         // these 2 values are only used when a matrix is used as a vertex attribute
         // this is only supported for regformated attribute for now
@@ -509,19 +470,37 @@ void sync_vertex_streams_and_attributes(GLContext &context, GxmRecordState &stat
         uint8_t component_count = attribute.componentCount;
 
         if (info.regformat) {
-            const int comp_size = gxm::attribute_format_size(attribute_format);
-            component_count = (comp_size * component_count + 3) / 4;
-            type = GL_INT;
+            component_count = info.component_count;
+            switch (info.gxm_type) {
+            case SCE_GXM_PARAMETER_TYPE_U8:
+            case SCE_GXM_PARAMETER_TYPE_S8:
+            case SCE_GXM_PARAMETER_TYPE_C10:
+                type = GL_UNSIGNED_BYTE;
+                break;
+            case SCE_GXM_PARAMETER_TYPE_U16:
+            case SCE_GXM_PARAMETER_TYPE_S16:
+            case SCE_GXM_PARAMETER_TYPE_F16:
+                type = GL_UNSIGNED_SHORT;
+                break;
+            default:
+                // U32 format
+                type = GL_UNSIGNED_INT;
+                break;
+            }
             upload_integral = true;
+
+            if (info.gxm_type == SCE_GXM_PARAMETER_TYPE_C10)
+                // this is 10-bit and not 8-bit
+                component_count = (component_count * 10 + 7) / 8;
 
             if (component_count > 4) {
                 // a matrix is used as an attribute, pack everything into an array of vec4
                 array_size = (component_count + 3) / 4;
-                array_element_size = 4 * sizeof(int32_t);
+                array_element_size = 4 * gxm::attribute_format_size(attribute.format);
                 component_count = 4;
             }
         } else {
-            switch (info.gxm_type()) {
+            switch (info.gxm_type) {
             case SCE_GXM_PARAMETER_TYPE_U8:
             case SCE_GXM_PARAMETER_TYPE_S8:
             case SCE_GXM_PARAMETER_TYPE_U16:
@@ -537,11 +516,11 @@ void sync_vertex_streams_and_attributes(GLContext &context, GxmRecordState &stat
 
         const std::uint16_t stream_index = attribute.streamIndex;
 
-        for (int i = 0; i < array_size; i++) {
-            if (upload_integral || (attribute_format == SCE_GXM_ATTRIBUTE_FORMAT_UNTYPED)) {
+        for (uint32_t i = 0; i < array_size; i++) {
+            if (upload_integral || (attribute.format == SCE_GXM_ATTRIBUTE_FORMAT_UNTYPED)) {
                 glVertexAttribIPointer(attrib_location + i, component_count, type, stream.stride, reinterpret_cast<const GLvoid *>(i * array_element_size + attribute.offset + offset_in_buffer[stream_index]));
             } else {
-                glVertexAttribPointer(attrib_location + i, component_count, type, normalised, stream.stride, reinterpret_cast<const GLvoid *>(i * array_element_size + attribute.offset + offset_in_buffer[stream_index]));
+                glVertexAttribPointer(attrib_location + i, component_count, type, normalized, stream.stride, reinterpret_cast<const GLvoid *>(i * array_element_size + attribute.offset + offset_in_buffer[stream_index]));
             }
 
             glEnableVertexAttribArray(attrib_location + i);

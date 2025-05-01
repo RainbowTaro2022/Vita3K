@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDebugForDriver.h"
+#include <module/module.h>
 
 EXPORT(int, ksceDebugPrintKernelAssertion) {
     return UNIMPLEMENTED();
@@ -52,13 +52,3 @@ EXPORT(int, ksceKernelGetMinimumAssertionLevel) {
 EXPORT(int, ksceKernelGetTtyInfo) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(ksceDebugPrintKernelAssertion)
-BRIDGE_IMPL(ksceDebugPrintKernelPanic)
-BRIDGE_IMPL(ksceDebugPrintf)
-BRIDGE_IMPL(ksceDebugPrintf2)
-BRIDGE_IMPL(ksceDebugPrintfKernelAssertion)
-BRIDGE_IMPL(ksceDebugPrintfKernelPanic)
-BRIDGE_IMPL(ksceEventLogGetInfo)
-BRIDGE_IMPL(ksceKernelGetMinimumAssertionLevel)
-BRIDGE_IMPL(ksceKernelGetTtyInfo)

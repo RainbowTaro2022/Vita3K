@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -73,10 +73,9 @@ struct SysmemState {
     }
 };
 
-LIBRARY_INIT_IMPL(SceSysmem) {
+LIBRARY_INIT(SceSysmem) {
     emuenv.kernel.obj_store.create<SysmemState>();
 }
-LIBRARY_INIT_REGISTER(SceSysmem)
 
 constexpr SceUInt32 SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT = 4;
 
@@ -94,8 +93,7 @@ EXPORT(SceUID, sceKernelAllocMemBlock, const char *pName, SceKernelMemBlockType 
     case SCE_KERNEL_MEMBLOCK_TYPE_USER_RX:
     case SCE_KERNEL_MEMBLOCK_TYPE_USER_RW:
     case SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE:
-        // should only be 4K, but Freedom War crashes if the alignment is less than 32K...
-        min_alignment = 0x8000;
+        min_alignment = 0x1000;
         break;
     case SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW:
         min_alignment = 0x40000;
@@ -112,18 +110,36 @@ EXPORT(SceUID, sceKernelAllocMemBlock, const char *pName, SceKernelMemBlockType 
 
     SceSize alignment = min_alignment;
     if (optp && (optp->attr & SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT)) {
-        alignment = optp->alignment;
         // alignment must be a power of 2
-        // it should also be at least min_alignment but it looks like it is not the case in games like uncharted
-        // and the ps vita does not return an error
-        if (alignment & (alignment - 1))
+        if (optp->alignment & (optp->alignment - 1))
             return RET_ERROR(SCE_KERNEL_ERROR_INVALID_ARGUMENT);
+
+        alignment = std::max(alignment, optp->alignment);
+    }
+
+    // x & -x returns the lsb of x
+    alignment = std::max(alignment, size & -size);
+
+    // https://wiki.henkaku.xyz/vita/SceSysmem_Types#memtype_bit_value
+    Address start_address;
+    switch (type) {
+    case SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE:
+    case SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW:
+        start_address = 0x70000000U;
+        break;
+    case SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW:
+        start_address = 0x60000000U;
+        break;
+    default:
+        // technically should be 0x81000000 but it shouldn't make a difference
+        start_address = 0x80000000U;
+        break;
     }
 
     const auto state = emuenv.kernel.obj_store.get<SysmemState>();
     const auto guard = std::lock_guard<std::mutex>(state->mutex);
 
-    Ptr<void> address = Ptr<void>(alloc(mem, size, pName, alignment));
+    Ptr<void> address = Ptr<void>(alloc_aligned(mem, size, pName, alignment, start_address));
 
     if (!address) {
         return RET_ERROR(SCE_KERNEL_ERROR_NO_MEMORY);
@@ -197,9 +213,9 @@ EXPORT(SceUID, sceKernelFindMemBlockByAddr, Address addr, uint32_t size) {
     const auto state = emuenv.kernel.obj_store.get<SysmemState>();
     const auto guard = std::lock_guard<std::mutex>(state->mutex);
 
-    for (auto it = state->blocks.begin(); it != state->blocks.end(); ++it) {
-        if (it->second->mappedBase.address() <= addr && (it->second->mappedBase.address() + it->second->mappedSize > addr)) {
-            return it->first;
+    for (auto &[id, block] : state->blocks) {
+        if (block->mappedBase.address() <= addr && (block->mappedBase.address() + block->mappedSize > addr)) {
+            return id;
         }
     }
     return RET_ERROR(SCE_KERNEL_ERROR_BLOCK_ERROR);
@@ -271,8 +287,7 @@ EXPORT(int, sceKernelGetMemBlockInfoByAddr, Address addr, SceKernelMemBlockInfo 
     const auto guard = std::lock_guard<std::mutex>(state->mutex);
     assert(addr >= 0);
     assert(info != nullptr);
-    for (Blocks::const_iterator it = state->blocks.begin(); it != state->blocks.end(); ++it) {
-        auto block_info = it->second;
+    for (const auto &[_, block_info] : state->blocks) {
         if (block_info->mappedBase.address() <= addr && (block_info->mappedBase.address() + block_info->mappedSize > addr)) {
             memcpy(info, block_info.get(), sizeof(SceKernelMemBlockInfo));
             return SCE_KERNEL_OK;
@@ -347,24 +362,3 @@ EXPORT(int, sceKernelSyncVMDomain, SceUID block_uid, Address base, uint32_t size
 
     return 0;
 }
-
-BRIDGE_IMPL(sceKernelAllocMemBlock)
-BRIDGE_IMPL(sceKernelAllocMemBlockForVM)
-BRIDGE_IMPL(sceKernelAllocUnmapMemBlock)
-BRIDGE_IMPL(sceKernelCheckModelCapability)
-BRIDGE_IMPL(sceKernelCloseMemBlock)
-BRIDGE_IMPL(sceKernelCloseVMDomain)
-BRIDGE_IMPL(sceKernelFindMemBlockByAddr)
-BRIDGE_IMPL(sceKernelFreeMemBlock)
-BRIDGE_IMPL(sceKernelFreeMemBlockForVM)
-BRIDGE_IMPL(sceKernelGetFreeMemorySize)
-BRIDGE_IMPL(sceKernelGetMemBlockBase)
-BRIDGE_IMPL(sceKernelGetMemBlockInfoByAddr)
-BRIDGE_IMPL(sceKernelGetMemBlockInfoByRange)
-BRIDGE_IMPL(sceKernelGetModel)
-BRIDGE_IMPL(sceKernelGetModelForCDialog)
-BRIDGE_IMPL(sceKernelGetSubbudgetInfo)
-BRIDGE_IMPL(sceKernelIsPSVitaTV)
-BRIDGE_IMPL(sceKernelOpenMemBlock)
-BRIDGE_IMPL(sceKernelOpenVMDomain)
-BRIDGE_IMPL(sceKernelSyncVMDomain)

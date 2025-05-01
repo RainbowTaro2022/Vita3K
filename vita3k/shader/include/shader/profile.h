@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #ifdef TRACY_ENABLE
 
-#include "public/tracy/Tracy.hpp"
+#include <tracy/Tracy.hpp>
 #define SHADER_PROFILE(name) ZoneNamedNC(___tracy_scoped_zone, name, 0x000035, false);
 
 #else

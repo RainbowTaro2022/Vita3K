@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 #include <lang/state.h>
 
 #include <config/state.h>
+#include <dialog/state.h>
 #include <gui/state.h>
 #include <ime/state.h>
 #include <util/fs.h>
@@ -26,12 +27,17 @@
 #include <pugixml.hpp>
 
 namespace lang {
+
+static const std::vector<std::string> list_user_lang_static = {
+    "id", "ms", "ua"
+};
+
 void init_lang(LangState &lang, EmuEnvState &emuenv) {
     lang = {};
     emuenv.common_dialog.lang = {};
     emuenv.ime.lang = {};
 
-    const auto set_lang = [&](std::string language) {
+    const auto set_lang = [&](const std::string &language) {
         lang.user_lang[GUI] = language;
         lang.user_lang[LIVE_AREA] = language;
     };
@@ -67,11 +73,25 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
     default: break;
     }
 
+    const auto system_lang_path{ emuenv.static_assets_path / "lang/system" };
+    const auto user_lang_shared_path{ emuenv.shared_path / "lang/user" };
+    const auto user_lang_static_path{ emuenv.static_assets_path / "lang/user" };
+
+    // Create user lang folder if not exists and create a file to indicate where to place the lang files
+    if (!fs::exists(user_lang_shared_path)) {
+        fs::create_directories(user_lang_shared_path);
+        fs::ofstream outfile(user_lang_shared_path / "PLACE USER LANG HERE.txt");
+        outfile.close();
+    }
+
+    const auto is_user_lang_static = vector_utils::contains(list_user_lang_static, emuenv.cfg.user_lang);
+
+    // Load lang xml
     pugi::xml_document lang_xml;
-    const auto lang_path{ fs::path(emuenv.base_path) / "lang" };
-    const auto lang_xml_path = (lang_path / (lang.user_lang[GUI] + ".xml")).string();
+    const auto lang_xml_path{ (emuenv.cfg.user_lang.empty() ? system_lang_path / lang.user_lang[GUI] : (is_user_lang_static ? user_lang_static_path : user_lang_shared_path) / emuenv.cfg.user_lang).replace_extension("xml") };
     if (fs::exists(lang_xml_path)) {
-        if (lang_xml.load_file(lang_xml_path.c_str())) {
+        auto load_xml_res = lang_xml.load_file(lang_xml_path.c_str());
+        if (load_xml_res) {
             // Lang
             const auto lang_child = lang_xml.child("lang");
             if (!lang_child.empty()) {
@@ -99,6 +119,9 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                     // Emulation Menu
                     set_lang_string(lang.main_menubar.emulation, main_menubar.child("emulation"));
 
+                    // Debug Menu
+                    set_lang_string(lang.main_menubar.debug, main_menubar.child("debug"));
+
                     // Configuration Menu
                     set_lang_string(lang.main_menubar.configuration, main_menubar.child("configuration"));
 
@@ -113,7 +136,20 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                 set_lang_string(lang.about, lang_child.child("about"));
 
                 // App Context
-                set_lang_string(lang.app_context, lang_child.child("app_context"));
+                const auto app_context = lang_child.child("app_context");
+                if (!app_context.empty()) {
+                    // Main
+                    set_lang_string(lang.app_context.main, app_context);
+
+                    // Delete
+                    set_lang_string(lang.app_context.deleting, app_context.child("delete"));
+
+                    // Information
+                    set_lang_string(lang.app_context.info, app_context.child("info"));
+
+                    // Time Used
+                    set_lang_string(lang.app_context.time_used, app_context.child("time_used"));
+                }
 
                 // Common
                 const auto common = lang_child.child("common");
@@ -125,7 +161,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                         if (!child.empty()) {
                             dest.clear();
                             for (const auto day : child)
-                                dest.push_back(day.text().as_string());
+                                dest.emplace_back(day.text().as_string());
                         }
                     };
 
@@ -254,6 +290,9 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                     set_lang_string(lang.live_area.help, live_area.child("help"));
                 }
 
+                // Message
+                set_lang_string(emuenv.common_dialog.lang.message, lang_child.child("message"));
+
                 // Performance Overlay
                 set_lang_string(lang.performance_overlay, lang_child.child("performance_overlay"));
 
@@ -304,7 +343,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                         auto &lang_settings = lang.settings.language;
                         set_lang_string(lang.settings.language.main, language);
 
-                        // Input Languague
+                        // Input Language
                         const auto input_language = language.child("input_language");
                         if (!input_language.empty()) {
                             // Main
@@ -319,7 +358,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                                 if (!keyboard_lang_ime.empty()) {
                                     lang_ime.clear();
                                     const auto op = [](const auto &lang) {
-                                        return std::make_pair(SceImeLanguage(lang.attribute("id").as_ullong()), lang.text().as_string());
+                                        return std::make_pair(static_cast<SceImeLanguage>(lang.attribute("id").as_ullong()), lang.text().as_string());
                                     };
                                     std::transform(std::begin(keyboard_lang_ime), std::end(keyboard_lang_ime), std::back_inserter(lang_ime), op);
                                 }
@@ -329,7 +368,41 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                 }
 
                 // Settings Dialog
-                set_lang_string(lang.settings_dialog, lang_child.child("settings_dialog"));
+                const auto settings_dialog = lang_child.child("settings_dialog");
+                if (!settings_dialog.empty()) {
+                    // Main
+                    set_lang_string(lang.settings_dialog.main_window, settings_dialog);
+
+                    // Core
+                    set_lang_string(lang.settings_dialog.core, settings_dialog.child("core"));
+
+                    // CPU
+                    set_lang_string(lang.settings_dialog.cpu, settings_dialog.child("cpu"));
+
+                    // GPU
+                    set_lang_string(lang.settings_dialog.gpu, settings_dialog.child("gpu"));
+
+                    // Audio
+                    set_lang_string(lang.settings_dialog.audio, settings_dialog.child("audio"));
+
+                    // System
+                    set_lang_string(lang.settings_dialog.system, settings_dialog.child("system"));
+
+                    // Emulator
+                    set_lang_string(lang.settings_dialog.emulator, settings_dialog.child("emulator"));
+
+                    // GUI
+                    set_lang_string(lang.settings_dialog.gui, settings_dialog.child("gui"));
+
+                    // Network
+                    set_lang_string(lang.settings_dialog.network, settings_dialog.child("network"));
+
+                    // Debug
+                    set_lang_string(lang.settings_dialog.debug, settings_dialog.child("debug"));
+                }
+
+                // System Applications Title
+                set_lang_string(lang.sys_apps_title, lang_child.child("sys_apps_title"));
 
                 // Trophy Collection
                 set_lang_string(lang.trophy_collection, lang_child.child("trophy_collection"));
@@ -343,9 +416,27 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                 // Welcome
                 set_lang_string(lang.welcome, lang_child.child("welcome"));
             }
-        } else
+        } else {
             LOG_ERROR("Error open lang file xml: {}", lang_xml_path);
-    }
+            LOG_DEBUG("error: {} position: {}", load_xml_res.description(), load_xml_res.offset);
+            constexpr ptrdiff_t context_window = 20;
+            fs::ifstream file(lang_xml_path, std::ios::binary);
+            if (file.is_open()) {
+                const ptrdiff_t error_in_context = load_xml_res.offset < context_window ? load_xml_res.offset : context_window;
+                file.seekg(load_xml_res.offset - error_in_context, std::ios::beg);
+                if (!file.eof()) {
+                    std::string error_context;
+                    error_context.resize(context_window * 2);
+                    file.read(error_context.data(), context_window * 2);
+                    if (file.gcount() < context_window * 2)
+                        error_context.resize(file.gcount());
+                    LOG_DEBUG("Error preview: {}|{}", error_context.substr(0, error_in_context), error_context.substr(error_in_context));
+                }
+                file.close();
+            }
+        }
+    } else
+        LOG_ERROR("Lang file xml not found: {}", lang_xml_path);
 }
 
 } // namespace lang

@@ -1,4 +1,4 @@
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 #include <ngs/system.h>
 #include <ngs/types.h>
 
-#define SCE_NGS_FILTER_PARAMS_STRUCT_ID 0x01015CE5
-#define SCE_NGS_FILTER_PARAMS_COEFF_STRUCT_ID 0x02015CE5
+#define SCE_NGS_FILTER_PARAMS_STRUCT_ID 0x01015CE4
+#define SCE_NGS_FILTER_PARAMS_COEFF_STRUCT_ID 0x02015CE4
 
 enum SceNgsParamFilterMode : uint32_t {
     SCE_NGS_FILTER_MODE_OFF,

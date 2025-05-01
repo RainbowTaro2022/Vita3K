@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -21,10 +21,7 @@
 
 #include <mem/ptr.h>
 
-#include <thread>
-
 #include <condition_variable>
-#include <optional>
 #include <queue>
 #include <vector>
 
@@ -68,7 +65,6 @@ struct VoiceScheduler {
     bool is_updating = false;
 
 protected:
-    bool deque_voice_impl(Voice *voice);
     void deque_insert(const MemState &mem, Voice *voice);
 
     bool resort_to_respect_dependencies(const MemState &mem, Voice *source);
@@ -79,10 +75,10 @@ public:
     bool deque_voice(Voice *voice);
 
     bool play(const MemState &mem, Voice *voice);
-    bool pause(Voice *voice);
+    bool pause(const MemState &mem, Voice *voice);
     bool resume(const MemState &mem, Voice *voice);
-    bool stop(Voice *voice);
-    bool off(Voice *voice);
+    bool stop(const MemState &mem, Voice *voice);
+    bool off(const MemState &mem, Voice *voice);
 
     void update(KernelState &kern, const MemState &mem, const SceUID thread_id);
 

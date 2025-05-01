@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceSblQafMgr.h"
+#include <module/module.h>
 
 EXPORT(int, sceSblQafManagerDeleteQafTokenForUser) {
     return UNIMPLEMENTED();
@@ -88,22 +88,3 @@ EXPORT(int, sceSblQafMgrIsAllowScreenShotAlways) {
 EXPORT(int, sceSblQafMgrSetQafToken2) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceSblQafManagerDeleteQafTokenForUser)
-BRIDGE_IMPL(sceSblQafManagerGetQafNameForUser)
-BRIDGE_IMPL(sceSblQafManagerIsAllowKernelDebugForUser)
-BRIDGE_IMPL(sceSblQafManagerSetQafTokenForUser)
-BRIDGE_IMPL(sceSblQafMgrDeleteQafToken2)
-BRIDGE_IMPL(sceSblQafMgrGetQafName)
-BRIDGE_IMPL(sceSblQafMgrGetQafToken)
-BRIDGE_IMPL(sceSblQafMgrGetQafToken2)
-BRIDGE_IMPL(sceSblQafMgrIsAllowAllDebugMenuDisplay)
-BRIDGE_IMPL(sceSblQafMgrIsAllowForceUpdate)
-BRIDGE_IMPL(sceSblQafMgrIsAllowLimitedDebugMenuDisplay)
-BRIDGE_IMPL(sceSblQafMgrIsAllowMinimumDebugMenuDisplay)
-BRIDGE_IMPL(sceSblQafMgrIsAllowNonQAPup)
-BRIDGE_IMPL(sceSblQafMgrIsAllowNpFullTest)
-BRIDGE_IMPL(sceSblQafMgrIsAllowNpTest)
-BRIDGE_IMPL(sceSblQafMgrIsAllowRemoteSysmoduleLoad)
-BRIDGE_IMPL(sceSblQafMgrIsAllowScreenShotAlways)
-BRIDGE_IMPL(sceSblQafMgrSetQafToken2)

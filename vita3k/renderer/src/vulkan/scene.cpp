@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -23,7 +23,6 @@
 #include <config/state.h>
 #include <spdlog/fmt/bin_to_hex.h>
 
-#include <util/align.h>
 #include <util/log.h>
 
 namespace renderer::vulkan {
@@ -37,9 +36,9 @@ void set_uniform_buffer(VKContext &context, const MemState &mem, const ShaderPro
     if (context.state.features.support_memory_mapping) {
         const uint64_t buffer_address = context.state.get_matching_device_address(data.address());
         if (vertex_shader) {
-            context.current_vert_render_info.buffer_addresses[block_num] = buffer_address;
+            context.curr_vert_ublock.set_buffer_address(block_num, buffer_address);
         } else {
-            context.current_frag_render_info.buffer_addresses[block_num] = buffer_address;
+            context.curr_frag_ublock.set_buffer_address(block_num, buffer_address);
         }
     } else {
         const uint32_t data_size_upload = std::min<uint32_t>(size, program->uniform_buffer_sizes.at(block_num) * 4);
@@ -65,57 +64,35 @@ void set_uniform_buffer(VKContext &context, const MemState &mem, const ShaderPro
     }
 }
 
-void new_frame(VKContext &context) {
-    if (context.state.features.support_memory_mapping) {
-        FrameDoneRequest request = { context.frame_timestamp };
-        context.request_queue.push(request);
+void mid_scene_flush(VKContext &context, const SceGxmNotification notification) {
+    // two cases :
+    // notification.addr is 0: this means that the mid scene flush must be used as a barrier in the renderpass
+    // notification.addr is not 0: this means the app is waiting for this part to be finished to re-use the resources
+
+    // Note: however, when testing, the barrier inside a pipeline does not work (or not entirely, depending on the GPU)
+    // maybe because I'm writing using buffer device addresses, not sure...
+    // so for the time being always restart the render pass
+    // const bool restart_render_pass = notification.address.address() != 0;
+    const bool restart_render_pass = true;
+
+    if (restart_render_pass && context.in_renderpass)
+        context.stop_render_pass();
+
+    // in case there is no notification, this will happen in the render pass
+    vk::MemoryBarrier barrier{
+        .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+        .dstAccessMask = vk::AccessFlagBits::eVertexAttributeRead,
+    };
+    context.render_cmd.pipelineBarrier(vk::PipelineStageFlagBits::eVertexShader, vk::PipelineStageFlagBits::eVertexInput,
+        vk::DependencyFlags(), barrier, {}, {});
+
+    if (restart_render_pass) {
+        SceGxmNotification empty_notification = { Ptr<uint32_t>(0), 0 };
+        const bool submit = notification.address.address() != 0;
+        context.stop_recording(notification, empty_notification, submit);
+        context.start_recording();
+        context.scene_timestamp++;
     }
-
-    context.frame_timestamp++;
-    context.current_frame_idx = context.frame_timestamp % MAX_FRAMES_RENDERING;
-
-    vk::Device device = context.state.device;
-    FrameObject &frame = context.frame();
-
-    // wait on all fences still present to make sure
-    if (!frame.rendered_fences.empty()) {
-        // wait for the fences, then reset them
-
-        if (context.state.features.support_memory_mapping) {
-            // this will underflow for the first MAX_FRAMES_RENDERING frames
-            // but that's not an issue as frame.rendered_fences will be empty
-            uint64_t previous_frame_timestamp = context.frame_timestamp - MAX_FRAMES_RENDERING;
-
-            // the wait is done by the wait thread
-            std::unique_lock<std::mutex> lock(context.new_frame_mutex);
-            context.new_frame_condv.wait(lock, [&]() {
-                return context.last_frame_waited >= previous_frame_timestamp;
-            });
-        } else {
-            auto result = device.waitForFences(frame.rendered_fences, VK_TRUE, std::numeric_limits<uint64_t>::max());
-            if (result != vk::Result::eSuccess) {
-                LOG_ERROR("Could not wait for fences.");
-                assert(false);
-                return;
-            }
-        }
-
-        // reset the fences in both case (the wait thread does not do that as they can still be used)
-        device.resetFences(frame.rendered_fences);
-        frame.rendered_fences.clear();
-    }
-
-    device.resetCommandPool(frame.prerender_pool);
-    device.resetCommandPool(frame.render_pool);
-    device.resetDescriptorPool(frame.descriptor_pool);
-
-    // deferred destruction of the objects
-    frame.destroy_queue.destroy_objects();
-
-    context.last_vert_texture_count = ~0;
-    context.last_frag_texture_count = ~0;
-
-    frame.frame_timestamp = context.frame_timestamp;
 }
 
 #ifdef __APPLE__
@@ -135,6 +112,54 @@ void restride_stream(const uint8_t *&stream, uint32_t &size, uint32_t stride) {
 }
 #endif
 
+// when needed, how many descriptor of the given size we allocate for each frame at once
+static constexpr uint32_t DESCRIPTOR_PACK_SIZE = 64;
+
+static vk::DescriptorSet retrieve_descriptor(VKContext &context, bool is_vertex, uint16_t textures_count) {
+    if (textures_count == 0)
+        return context.empty_set;
+
+    VKState &state = context.state;
+    FrameDescriptor &frame_descriptor = is_vertex ? state.frame().vert_descriptors[textures_count - 1] : state.frame().frag_descriptors[textures_count - 1];
+    if (frame_descriptor.descriptors_idx < frame_descriptor.sets.size())
+        return frame_descriptor.sets[frame_descriptor.descriptors_idx++];
+
+    // we have no more frame descriptor available, create a bunch of new one for this specific layout
+    vk::DescriptorPoolSize pool_size{
+        .type = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = textures_count * DESCRIPTOR_PACK_SIZE * MAX_FRAMES_RENDERING
+    };
+
+    vk::DescriptorPoolCreateInfo descriptor_pool_info{
+        .maxSets = DESCRIPTOR_PACK_SIZE * MAX_FRAMES_RENDERING
+    };
+    descriptor_pool_info.setPoolSizes(pool_size);
+
+    vk::DescriptorPool descriptor_pool = state.device.createDescriptorPool(descriptor_pool_info);
+    state.frame_descriptor_pools.push_back(descriptor_pool);
+
+    // allocate all the descriptor sets
+    const vk::DescriptorSetLayout set_layout = is_vertex ? state.pipeline_cache.vertex_textures_layout[textures_count] : state.pipeline_cache.fragment_textures_layout[textures_count];
+    std::vector<vk::DescriptorSetLayout> layouts(DESCRIPTOR_PACK_SIZE * MAX_FRAMES_RENDERING, set_layout);
+    vk::DescriptorSetAllocateInfo descr_set_info{
+        .descriptorPool = descriptor_pool
+    };
+    descr_set_info.setSetLayouts(layouts);
+    auto descriptor_sets = state.device.allocateDescriptorSets(descr_set_info);
+
+    // distribute them among all frames
+    for (int frame_idx = 0; frame_idx < MAX_FRAMES_RENDERING; frame_idx++) {
+        FrameObject &frame_object = state.frames[frame_idx];
+        FrameDescriptor &frame_descr = is_vertex ? frame_object.vert_descriptors[textures_count - 1] : frame_object.frag_descriptors[textures_count - 1];
+
+        // insert DESCRIPTOR_PACK_SIZE in each frame descriptor
+        auto descr_it = descriptor_sets.begin() + frame_idx * DESCRIPTOR_PACK_SIZE;
+        frame_descr.sets.insert(frame_descr.sets.end(), descr_it, descr_it + DESCRIPTOR_PACK_SIZE);
+    }
+
+    return frame_descriptor.sets[frame_descriptor.descriptors_idx++];
+}
+
 static void draw_bind_descriptors(VKContext &context, MemState &mem) {
     VKState &state = context.state;
 
@@ -142,12 +167,8 @@ static void draw_bind_descriptors(VKContext &context, MemState &mem) {
     descriptors[0] = context.global_set;
     descriptors[1] = context.rendertarget_set;
 
-    const uint16_t vertex_textures_count = reinterpret_cast<VertexProgram *>(
-        context.record.vertex_program.get(mem)->renderer_data.get())
-                                               ->texture_count;
-    const uint16_t fragment_texture_count = reinterpret_cast<VKFragmentProgram *>(
-        context.record.fragment_program.get(mem)->renderer_data.get())
-                                                ->texture_count;
+    const uint16_t vertex_textures_count = context.record.vertex_program.get(mem)->renderer_data->texture_count;
+    const uint16_t fragment_texture_count = context.record.fragment_program.get(mem)->renderer_data->texture_count;
 
     vk::PipelineLayout pipeline_layout = state.pipeline_cache.pipeline_layouts[vertex_textures_count][fragment_texture_count];
 
@@ -159,29 +180,13 @@ static void draw_bind_descriptors(VKContext &context, MemState &mem) {
     context.last_frag_texture_count = fragment_texture_count;
 
     {
-        vk::DescriptorSetAllocateInfo descr_set_info{
-            .descriptorPool = context.frame().descriptor_pool
-        };
-        std::vector<vk::DescriptorSetLayout> layouts;
-        if (need_vert_descr)
-            layouts.push_back(state.pipeline_cache.vertex_textures_layout[vertex_textures_count]);
-        if (need_frag_descr)
-            layouts.push_back(state.pipeline_cache.fragment_textures_layout[fragment_texture_count]);
-
-        std::vector<vk::DescriptorSet> sets;
-        if (!layouts.empty()) {
-            descr_set_info.setSetLayouts(layouts);
-            sets = state.device.allocateDescriptorSets(descr_set_info);
-        }
-
-        int set_idx = 0;
         if (need_vert_descr) {
-            context.last_vert_texture_descriptor = sets[set_idx++];
+            context.last_vert_texture_descriptor = retrieve_descriptor(context, true, vertex_textures_count);
         }
         descriptors[2] = context.last_vert_texture_descriptor;
 
         if (need_frag_descr) {
-            context.last_frag_texture_descriptor = sets[set_idx++];
+            context.last_frag_texture_descriptor = retrieve_descriptor(context, false, fragment_texture_count);
         }
         descriptors[3] = context.last_frag_texture_descriptor;
     }
@@ -244,25 +249,10 @@ static void bind_vertex_streams(VKContext &context, MemState &mem) {
     const SceGxmVertexProgram &vertex_program = *state.vertex_program.get(mem);
     VertexProgram *vkvert = vertex_program.renderer_data.get();
 
-    // we need to do another check here (the same is done in pipeline_cache)
-    // because if a game (like Secret of Mana) uses two programs with the same shaders and the same vertex input stripped
-    // the pipeline cache won't add stripped symbols for the second program
-    if (!vkvert->stripped_symbols_checked) {
-        // Insert some symbols here
-        const SceGxmProgram *vertex_program_body = vertex_program.program.get(mem);
-        if (vertex_program_body && (vertex_program_body->primary_reg_count != 0)) {
-            for (std::size_t i = 0; i < vertex_program.attributes.size(); i++) {
-                vkvert->attribute_infos.emplace(vertex_program.attributes[i].regIndex, shader::usse::AttributeInformation(static_cast<std::uint16_t>(i), SCE_GXM_PARAMETER_TYPE_F32, false, false, false));
-            }
-        }
-
-        vkvert->stripped_symbols_checked = true;
-    }
-
     int max_stream_idx = -1;
 
     for (const SceGxmVertexAttribute &attribute : vertex_program.attributes) {
-        if (vkvert->attribute_infos.find(attribute.regIndex) == vkvert->attribute_infos.end())
+        if (!vkvert->attribute_infos.contains(attribute.regIndex))
             continue;
         max_stream_idx = std::max<int>(max_stream_idx, attribute.streamIndex);
     }
@@ -306,59 +296,20 @@ static void bind_vertex_streams(VKContext &context, MemState &mem) {
     context.render_cmd.bindVertexBuffers(0, max_stream_idx, context.vertex_stream_buffers, context.vertex_stream_offsets);
 }
 
-#ifdef __APPLE__
-// convert indices for triangle fans to indices for a triangle list
-// needed for metal because it does not support a triangle fan implementation
-template <typename T>
-void triangle_fan_to_triangle_list(void *&indices, size_t &count) {
-    // if N is the number of faces, there are N + 2 indices for triangle fans and 3N indices for triangle list
-    if (count < 3)
-        // safety check
-        return;
-
-    const uint32_t nb_triangle = count - 2;
-
-    T *old_indices = reinterpret_cast<T *>(indices);
-    indices = new uint8_t[3 * nb_triangle * sizeof(T)];
-    T *curr_indices = reinterpret_cast<T *>(indices);
-
-    for (uint32_t triangle = 0; triangle < nb_triangle; triangle++) {
-        curr_indices[0] = old_indices[0];
-        curr_indices[1] = old_indices[triangle + 1];
-        curr_indices[2] = old_indices[triangle + 2];
-        curr_indices += 3;
-    }
-
-    count = 3 * nb_triangle;
-}
-#endif
-
 void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format,
     Ptr<void> indices, size_t count, uint32_t instance_count, MemState &mem, const Config &config) {
     void *indices_ptr = indices.get(mem);
-#ifdef __APPLE__
-    bool replaced_indices = (type == SCE_GXM_PRIMITIVE_TRIANGLE_FAN);
-    // metal does not support triangle fans
-    if (replaced_indices) {
-        if (format == SCE_GXM_INDEX_FORMAT_U16) {
-            triangle_fan_to_triangle_list<uint16_t>(indices_ptr, count);
-        } else {
-            triangle_fan_to_triangle_list<uint32_t>(indices_ptr, count);
-        }
-        type = SCE_GXM_PRIMITIVE_TRIANGLES;
-    }
-#else
-    constexpr bool replaced_indices = false;
-#endif
 
-    context.check_for_macroblock_change();
+    context.check_for_macroblock_change(true);
 
     if (!context.in_renderpass)
         context.start_render_pass();
 
-    if (context.is_first_scene_draw && context.state.features.support_shader_interlock) {
+    // when we do multiple render pass for one scene (shader interlock or slow macroblock),
+    // we need to always load the depth-stencil after the first draw
+    if (context.is_first_scene_draw && (context.state.features.support_shader_interlock || context.ignore_macroblock)) {
         // update the render pass to load and store the depth and stencil
-        context.current_render_pass = context.state.pipeline_cache.retrieve_render_pass(context.current_color_attachment->format, ~0U);
+        context.current_render_pass = context.state.pipeline_cache.retrieve_render_pass(context.current_color_format, true, true);
         context.is_first_scene_draw = false;
     }
 
@@ -373,7 +324,7 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
             .newLayout = vk::ImageLayout::eGeneral,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = context.current_color_attachment->image,
+            .image = context.current_color_base_image->image,
             .subresourceRange = vkutil::color_subresource_range
         };
         context.render_cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader,
@@ -397,9 +348,7 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
 
     if (context.current_visibility_buffer != nullptr && context.current_query_idx != -1 && !context.is_in_query) {
         if (context.current_visibility_buffer->queries_used[context.current_query_idx]) {
-            static bool has_happened = false;
-            LOG_WARN_IF(!has_happened, "Visibility buffer entry is used more than once in a scene");
-            has_happened = true;
+            LOG_WARN_ONCE("Visibility buffer entry is used more than once in a scene");
             // still let this happen, this is a validation error but I think most GPUs should be fine with it
         }
         context.current_visibility_buffer->queries_used[context.current_query_idx] = true;
@@ -415,42 +364,68 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     if (context.refresh_pipeline || type != context.last_primitive) {
         context.refresh_pipeline = false;
         context.last_primitive = type;
-        vk::Pipeline new_pipeline = context.state.pipeline_cache.retrieve_pipeline(context, type, mem);
+
+        // We don't want to defer cases where we draw a whole quad over the screen as these draws could be necessary
+        // to be able to see anything
+        bool can_be_whole_quad = instance_count == 1 && count <= 6;
+        vk::Pipeline new_pipeline = context.state.pipeline_cache.retrieve_pipeline(context, type, !can_be_whole_quad, mem);
 
         if (new_pipeline != context.current_pipeline) {
             context.current_pipeline = new_pipeline;
-            context.render_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, context.current_pipeline);
+
+            if (new_pipeline != nullptr)
+                context.render_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, context.current_pipeline);
         }
     }
+
+    // can happen with asynchronous pipeline compilation
+    if (context.current_pipeline == nullptr)
+        return;
 
     if (config.log_active_shaders) {
         const std::string hash_text_f = hex_string(context.record.fragment_program.get(mem)->renderer_data->hash);
         const std::string hash_text_v = hex_string(context.record.vertex_program.get(mem)->renderer_data->hash);
 
         LOG_DEBUG("\nVertex  : {}\nFragment: {}", hash_text_v, hash_text_f);
-        LOG_DEBUG("Vertex default uniform buffer: {}\n", spdlog::to_hex(context.ubo_data[0].begin(), context.ubo_data[0].end(), 16));
-        LOG_DEBUG("Fragment default uniform buffer: {}\n", spdlog::to_hex(context.ubo_data[SCE_GXM_REAL_MAX_UNIFORM_BUFFER].begin(), context.ubo_data[SCE_GXM_REAL_MAX_UNIFORM_BUFFER].end(), 16));
+        LOG_DEBUG("Vertex default uniform buffer: {}\n", spdlog::to_hex(context.ubo_data[0], 16));
+        LOG_DEBUG("Fragment default uniform buffer: {}\n", spdlog::to_hex(context.ubo_data[SCE_GXM_REAL_MAX_UNIFORM_BUFFER], 16));
     }
 
     const bool use_memory_mapping = context.state.features.support_memory_mapping;
 
-    shader::RenderVertUniformBlockWithMapping &vert_ublock = context.current_vert_render_info;
+    // update uniforms if needed
+    // first update the buffer and texture count
+    auto &vert_render_data = context.record.vertex_program.get(mem)->renderer_data;
+    auto &frag_render_data = context.record.fragment_program.get(mem)->renderer_data;
+
+    if (use_memory_mapping) {
+        context.curr_vert_ublock.set_buffer_count(vert_render_data->buffer_count);
+        context.curr_frag_ublock.set_buffer_count(frag_render_data->buffer_count);
+    }
+
+    if (context.state.features.use_texture_viewport) {
+        context.curr_vert_ublock.set_texture_count(vert_render_data->texture_count);
+        context.curr_frag_ublock.set_texture_count(frag_render_data->texture_count);
+    }
+
+    auto &vert_ublock = context.curr_vert_ublock.base_block;
     vert_ublock.viewport_flip = context.record.viewport_flip;
     vert_ublock.viewport_flag = (context.record.viewport_flat) ? 0.0f : 1.0f;
     vert_ublock.z_offset = context.record.z_offset;
     vert_ublock.z_scale = context.record.z_scale;
-    vert_ublock.screen_width = static_cast<float>(context.render_target->width / context.state.res_multiplier);
-    vert_ublock.screen_height = static_cast<float>(context.render_target->height / context.state.res_multiplier);
-    const size_t vert_ublock_size = use_memory_mapping ? sizeof(shader::RenderVertUniformBlockWithMapping) : sizeof(shader::RenderVertUniformBlock);
+    vert_ublock.screen_width = context.render_target->width / context.state.res_multiplier;
+    vert_ublock.screen_height = context.render_target->height / context.state.res_multiplier;
 
-    if (memcmp(&context.previous_vert_info, &vert_ublock, vert_ublock_size) != 0) {
-        context.vertex_info_uniform_buffer.allocate(context.prerender_cmd, vert_ublock_size, &vert_ublock);
-        memcpy(&context.previous_vert_info, &vert_ublock, vert_ublock_size);
+    if (context.curr_vert_ublock.changed || memcmp(&context.prev_vert_ublock, &vert_ublock, sizeof(vert_ublock)) != 0) {
+        // TODO: this intermediate step can be avoided
+        context.curr_vert_ublock.copy_to(context.shader_info_temp);
+        context.vertex_info_uniform_buffer.allocate(context.prerender_cmd, context.curr_vert_ublock.get_size(), context.shader_info_temp);
+        memcpy(&context.prev_vert_ublock, &vert_ublock, sizeof(vert_ublock));
     }
 
-    shader::RenderFragUniformBlockWithMapping &frag_ublock = context.current_frag_render_info;
+    auto &frag_ublock = context.curr_frag_ublock.base_block;
     frag_ublock.writing_mask = context.record.writing_mask;
-    frag_ublock.res_multiplier = static_cast<float>(context.state.res_multiplier);
+    frag_ublock.res_multiplier = context.state.res_multiplier;
     const bool has_msaa = context.render_target->multisample_mode;
     const bool has_downscale = context.record.color_surface.downscale;
     if (has_msaa && !has_downscale)
@@ -458,11 +433,11 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     else if (!has_msaa && has_downscale)
         frag_ublock.res_multiplier /= 2;
 
-    const size_t frag_ublock_size = use_memory_mapping ? sizeof(shader::RenderFragUniformBlockWithMapping) : sizeof(shader::RenderFragUniformBlock);
-
-    if (memcmp(&context.previous_frag_info, &frag_ublock, frag_ublock_size) != 0) {
-        context.fragment_info_uniform_buffer.allocate(context.prerender_cmd, frag_ublock_size, &frag_ublock);
-        memcpy(&context.previous_frag_info, &frag_ublock, frag_ublock_size);
+    if (context.curr_frag_ublock.changed || memcmp(&context.prev_frag_ublock, &frag_ublock, sizeof(frag_ublock)) != 0) {
+        // TODO: this intermediate step can be avoided
+        context.curr_frag_ublock.copy_to(context.shader_info_temp);
+        context.fragment_info_uniform_buffer.allocate(context.prerender_cmd, context.curr_frag_ublock.get_size(), context.shader_info_temp);
+        memcpy(&context.prev_frag_ublock, &frag_ublock, sizeof(frag_ublock));
     }
 
     // create, update and bind descriptors (uniforms and textures)
@@ -474,21 +449,17 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     vk::IndexType index_type = (format == SCE_GXM_INDEX_FORMAT_U16) ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
     const size_t index_size = (format == SCE_GXM_INDEX_FORMAT_U16) ? 2 : 4;
 
-    if (context.state.features.support_memory_mapping) {
+    if (use_memory_mapping) {
         auto [buffer, offset] = context.state.get_matching_mapping(indices);
         context.render_cmd.bindIndexBuffer(buffer, offset, index_type);
     } else {
         const size_t index_buffer_size = index_size * count;
 
         context.index_stream_ring_buffer.allocate(context.prerender_cmd, index_buffer_size, indices_ptr);
-
         context.render_cmd.bindIndexBuffer(context.index_stream_ring_buffer.handle(), context.index_stream_ring_buffer.data_offset, index_type);
     }
 
     context.render_cmd.drawIndexed(count, instance_count, 0, 0, 0);
-
-    if (replaced_indices)
-        delete[] reinterpret_cast<uint8_t *>(indices_ptr);
 
     context.vertex_uniform_storage_allocated = false;
     context.fragment_uniform_storage_allocated = false;

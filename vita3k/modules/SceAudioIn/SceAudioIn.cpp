@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,10 +15,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceAudioIn.h"
+#include <module/module.h>
 
 #include <audio/state.h>
-#include <util/lock_and_find.h>
 #include <util/tracy.h>
 
 #define PORT_ID 0
@@ -36,24 +35,24 @@ enum SceAudioInParam {
 };
 
 template <>
-std::string to_debug_str<SceAudioInPortType>(const MemState &mem, SceAudioInPortType data) {
-    switch (data) {
+std::string to_debug_str<SceAudioInPortType>(const MemState &mem, SceAudioInPortType type) {
+    switch (type) {
     case SceAudioInPortType::SCE_AUDIO_IN_PORT_TYPE_VOICE: return "SCE_AUDIO_IN_PORT_TYPE_VOICE"; break;
     case SceAudioInPortType::SCE_AUDIO_IN_PORT_TYPE_RAW: return "SCE_AUDIO_IN_PORT_TYPE_RAW"; break;
-    default: return to_debug_str(mem, static_cast<typename std::underlying_type<SceAudioInPortType>::type>(data));
+    default: return to_debug_str(mem, static_cast<std::underlying_type_t<SceAudioInPortType>>(type));
     }
 }
 
 template <>
-std::string to_debug_str<SceAudioInParam>(const MemState &mem, SceAudioInParam data) {
-    switch (data) {
+std::string to_debug_str<SceAudioInParam>(const MemState &mem, SceAudioInParam type) {
+    switch (type) {
     case SceAudioInParam::SCE_AUDIO_IN_PARAM_FORMAT_S16_MONO: return "SCE_AUDIO_IN_PARAM_FORMAT_S16_MONO"; break;
     case SceAudioInParam::SCE_AUDIO_IN_GETSTATUS_MUTE: return "SCE_AUDIO_IN_GETSTATUS_MUTE"; break;
-    default: return to_debug_str(mem, static_cast<typename std::underlying_type<SceAudioInParam>::type>(data));
+    default: return to_debug_str(mem, static_cast<std::underlying_type_t<SceAudioInParam>>(type));
     }
 }
 
-enum SceAudioInErrorCode {
+enum SceAudioInErrorCode : uint32_t {
     //! Undefined error
     SCE_AUDIO_IN_ERROR_FATAL = 0x80260100,
     //! Bad value of port number
@@ -207,16 +206,3 @@ EXPORT(int, sceAudioInSetMute) {
     TRACY_FUNC(sceAudioInSetMute);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceAudioInGetAdopt)
-BRIDGE_IMPL(sceAudioInGetInput)
-BRIDGE_IMPL(sceAudioInGetMicGain)
-BRIDGE_IMPL(sceAudioInGetStatus)
-BRIDGE_IMPL(sceAudioInInput)
-BRIDGE_IMPL(sceAudioInInputWithInputDeviceState)
-BRIDGE_IMPL(sceAudioInOpenPort)
-BRIDGE_IMPL(sceAudioInOpenPortForDiag)
-BRIDGE_IMPL(sceAudioInReleasePort)
-BRIDGE_IMPL(sceAudioInSelectInput)
-BRIDGE_IMPL(sceAudioInSetMicGain)
-BRIDGE_IMPL(sceAudioInSetMute)

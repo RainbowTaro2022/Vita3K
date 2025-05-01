@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceLibLocation.h"
+#include <module/module.h>
 
 EXPORT(int, sceLocationCancelGetLocation) {
     return UNIMPLEMENTED();
@@ -104,26 +104,3 @@ EXPORT(int, sceLocationStopLocationCallback) {
 EXPORT(int, sceLocationTerm) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceLocationCancelGetLocation)
-BRIDGE_IMPL(sceLocationClose)
-BRIDGE_IMPL(sceLocationConfirm)
-BRIDGE_IMPL(sceLocationConfirmAbort)
-BRIDGE_IMPL(sceLocationConfirmGetResult)
-BRIDGE_IMPL(sceLocationConfirmGetStatus)
-BRIDGE_IMPL(sceLocationDenyApplication)
-BRIDGE_IMPL(sceLocationGetHeading)
-BRIDGE_IMPL(sceLocationGetLocation)
-BRIDGE_IMPL(sceLocationGetLocationWithTimeout)
-BRIDGE_IMPL(sceLocationGetMethod)
-BRIDGE_IMPL(sceLocationGetPermission)
-BRIDGE_IMPL(sceLocationInit)
-BRIDGE_IMPL(sceLocationOpen)
-BRIDGE_IMPL(sceLocationReopen)
-BRIDGE_IMPL(sceLocationSetGpsEmulationFile)
-BRIDGE_IMPL(sceLocationSetThreadParameter)
-BRIDGE_IMPL(sceLocationStartHeadingCallback)
-BRIDGE_IMPL(sceLocationStartLocationCallback)
-BRIDGE_IMPL(sceLocationStopHeadingCallback)
-BRIDGE_IMPL(sceLocationStopLocationCallback)
-BRIDGE_IMPL(sceLocationTerm)

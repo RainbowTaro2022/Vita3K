@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceMtpIf.h"
+#include <module/module.h>
 
 EXPORT(int, sceMtpIfCancelTransfer) {
     return UNIMPLEMENTED();
@@ -76,19 +76,3 @@ EXPORT(int, sceMtpIfStopPort) {
 EXPORT(int, sceMtpIfWaitConnect) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceMtpIfCancelTransfer)
-BRIDGE_IMPL(sceMtpIfChangePhase)
-BRIDGE_IMPL(sceMtpIfGetPort)
-BRIDGE_IMPL(sceMtpIfIsConnected)
-BRIDGE_IMPL(sceMtpIfRecvCommand)
-BRIDGE_IMPL(sceMtpIfRecvDataWithParam)
-BRIDGE_IMPL(sceMtpIfReset)
-BRIDGE_IMPL(sceMtpIfSendDataWithParam)
-BRIDGE_IMPL(sceMtpIfSendEvent)
-BRIDGE_IMPL(sceMtpIfSendResponse)
-BRIDGE_IMPL(sceMtpIfStartDriver)
-BRIDGE_IMPL(sceMtpIfStartPort)
-BRIDGE_IMPL(sceMtpIfStopDriver)
-BRIDGE_IMPL(sceMtpIfStopPort)
-BRIDGE_IMPL(sceMtpIfWaitConnect)

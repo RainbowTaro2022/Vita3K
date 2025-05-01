@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,22 +15,30 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceGxmInternal.h"
+#include <module/module.h>
+
+#include "SceGxm.h"
+
+#include <util/tracy.h>
+
+TRACY_MODULE_NAME(SceGxmInternal);
 
 EXPORT(int, sceGxmCheckMemoryInternal) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceGxmCreateRenderTargetInternal) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceGxmCreateRenderTargetInternal, const SceGxmRenderTargetParams *params, Ptr<SceGxmRenderTarget> *renderTarget) {
+    TRACY_FUNC(sceGxmCreateRenderTargetInternal, params, renderTarget);
+    return CALL_EXPORT(sceGxmCreateRenderTarget, params, renderTarget);
 }
 
 EXPORT(int, sceGxmGetDisplayQueueThreadIdInternal) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceGxmGetRenderTargetMemSizeInternal) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceGxmGetRenderTargetMemSizeInternal, const SceGxmRenderTargetParams *params, uint32_t *hostMemSize) {
+    TRACY_FUNC(sceGxmGetRenderTargetMemSizeInternal, params, hostMemSize);
+    return CALL_EXPORT(sceGxmGetRenderTargetMemSize, params, hostMemSize);
 }
 
 EXPORT(int, sceGxmGetTopContextInternal) {
@@ -72,18 +80,3 @@ EXPORT(int, sceGxmUnmapFragmentUsseMemoryInternal) {
 EXPORT(int, sceGxmUnmapVertexUsseMemoryInternal) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceGxmCheckMemoryInternal)
-BRIDGE_IMPL(sceGxmCreateRenderTargetInternal)
-BRIDGE_IMPL(sceGxmGetDisplayQueueThreadIdInternal)
-BRIDGE_IMPL(sceGxmGetRenderTargetMemSizeInternal)
-BRIDGE_IMPL(sceGxmGetTopContextInternal)
-BRIDGE_IMPL(sceGxmInitializedInternal)
-BRIDGE_IMPL(sceGxmIsInitializationInternal)
-BRIDGE_IMPL(sceGxmMapFragmentUsseMemoryInternal)
-BRIDGE_IMPL(sceGxmMapVertexUsseMemoryInternal)
-BRIDGE_IMPL(sceGxmRenderingContextIsWithinSceneInternal)
-BRIDGE_IMPL(sceGxmSetCallbackInternal)
-BRIDGE_IMPL(sceGxmSetInitializeParamInternal)
-BRIDGE_IMPL(sceGxmUnmapFragmentUsseMemoryInternal)
-BRIDGE_IMPL(sceGxmUnmapVertexUsseMemoryInternal)

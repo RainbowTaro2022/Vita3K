@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -23,8 +23,7 @@
 struct MemState;
 struct FeatureState;
 struct Config;
-
-typedef uint32_t TextureCacheHash;
+struct SDL_Window;
 
 namespace renderer {
 struct Context;
@@ -33,8 +32,8 @@ struct RenderTarget;
 struct State;
 struct VertexProgram;
 
-bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProgram &program, const SceGxmBlendInfo *blend, GXPPtrMap &gxp_ptr_map, const char *base_path, const char *title_id);
-bool create(std::unique_ptr<VertexProgram> &vp, State &state, const SceGxmProgram &program, GXPPtrMap &gxp_ptr_map, const char *base_path, const char *title_id);
+bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProgram &program, const SceGxmBlendInfo *blend, GXPPtrMap &gxp_ptr_map);
+bool create(std::unique_ptr<VertexProgram> &vp, State &state, const SceGxmProgram &program, GXPPtrMap &gxp_ptr_map, const std::vector<SceGxmVertexAttribute> &attributes);
 void create(SceGxmSyncObject *sync, State &state);
 void destroy(SceGxmSyncObject *sync, State &state);
 void finish(State &state, Context *context);
@@ -59,7 +58,7 @@ void submit_command_list(State &state, renderer::Context *context, CommandList &
 bool is_cmd_ready(MemState &mem, CommandList &command_list);
 void process_batch(State &state, MemState &mem, Config &config, CommandList &command_list);
 void process_batches(State &state, const FeatureState &features, MemState &mem, Config &config);
-bool init(SDL_Window *window, std::unique_ptr<State> &state, Backend backend, const Config &config, const char *base_path);
+bool init(SDL_Window *window, std::unique_ptr<State> &state, Backend backend, const Config &config, const Root &root_paths);
 
 void set_depth_bias(State &state, Context *ctx, bool is_front, int factor, int units);
 void set_depth_func(State &state, Context *ctx, bool is_front, SceGxmDepthFunc depth_func);
@@ -146,15 +145,39 @@ int send_single_command(State &state, Context *ctx, const CommandOpcode opcode, 
         return 0;
 }
 
-struct TextureCacheState;
-
 namespace texture {
 
 // Paletted textures.
-void palette_texture_to_rgba_4(uint32_t *dst, const uint8_t *src, size_t width, size_t height, const size_t stride, const uint32_t *palette);
-void palette_texture_to_rgba_8(uint32_t *dst, const uint8_t *src, size_t width, size_t height, const size_t stride, const uint32_t *palette);
-void yuv420_texture_to_rgb(uint8_t *dst, const uint8_t *src, size_t width, size_t height);
+void palette_texture_to_rgba_4(uint32_t *dst, const uint8_t *src, uint32_t width, uint32_t height, const uint32_t *palette);
+void palette_texture_to_rgba_8(uint32_t *dst, const uint8_t *src, uint32_t width, uint32_t height, const uint32_t *palette);
+void yuv420_texture_to_rgb(uint8_t *dst, const uint8_t *src, uint32_t width, uint32_t height, uint32_t layout_width, uint32_t layout_height, bool is_p3);
 const uint32_t *get_texture_palette(const SceGxmTexture &texture, const MemState &mem);
+
+/**
+ * \brief Try to resolve Z-order of block compressed texture
+ *
+ * \param fmt    Texture base format.
+ * \param dest   Destination texture data. Size must be sufficient enough of align(width, 4) * align(height,4) * 4 (bytes).
+ * \param data   Source data to solve.
+ * \param width  Texture width.
+ * \param height Texture height.
+ *
+ * \return Void.
+ */
+void resolve_z_order_compressed_texture(SceGxmTextureBaseFormat fmt, void *dest, const void *data, const uint32_t width, const uint32_t height);
+
+/**
+ * \brief Try to decompress texture to 32-bit RGBA.
+ *
+ * \param fmt    Texture base format.
+ * \param dest   Destination texture data. Size must be sufficient enough of align(width, 4) * align(height,4) * 4 (bytes).
+ * \param data   Source data to decompress.
+ * \param width  Texture width.
+ * \param height Texture height.
+ *
+ * \return Size of source taken.
+ */
+uint32_t decompress_compressed_texture(SceGxmTextureBaseFormat fmt, void *dest, const void *data, const uint32_t width, const uint32_t height);
 
 /**
  * \brief Decompresses all the blocks of a block compressed texture and stores the resulting pixels in 'image'.
@@ -165,38 +188,58 @@ const uint32_t *get_texture_palette(const SceGxmTexture &texture, const MemState
  * \param height            Texture height.
  * \param block_storage     Pointer to compressed blocks.
  * \param image             Pointer to the image where the decompressed pixels will be stored.
- * \param bc_type           Block compressed type. BC1 (DXT1), BC2 (DXT3), BC3 (DXT5), BC4U (RGTC1), BC4S (RGTC1), BC5U (RGTC2) or BC5S (RGTC2).
+ * \param format_id         Id of the compressed format, in order: BC1 (DXT1), BC2 (DXT3), BC3 (DXT5), BC4U (RGTC1), BC4S (RGTC1), BC5U (RGTC2) or BC5S (RGTC2).
  */
-void decompress_bc_swizz_image(std::uint32_t width, std::uint32_t height, const std::uint8_t *block_storage, std::uint32_t *image, const std::uint8_t bc_type);
+void decompress_bc_image(uint32_t width, uint32_t height, const uint8_t *block_storage, uint32_t *image, const uint8_t format_id);
+
+/**
+ * \brief Try to decompress texture to 16-bit RGB floating point color.
+ *
+ * \param fmt    Texture base format.
+ * \param dest   Destination texture data. Size must be sufficient enough of align(width, 4) * height * 4 (bytes).
+ * \param data   Source data to decompress.
+ * \param width  Texture width.
+ * \param height Texture height.
+ *
+ * \return Void.
+ */
+void decompress_packed_float_e5m9m9m9(SceGxmTextureBaseFormat fmt, void *dest, const void *data, const uint32_t width, const uint32_t height);
 
 /**
  * \brief Solves Z-order on all the blocks of a block compressed texture and stores the resulting pixels in 'dest'.
  *
  * Output results is in format RGBA, with each channel being 8 bits.
  *
- * \param width     Texture width.
- * \param height    Texture height.
- * \param src       Pointer to compressed blocks.
- * \param dest      Pointer to the image where the decompressed pixels will be stored.
- * \param bc_type   Block compressed type. BC1 (DXT1), BC2 (DXT3), BC3 (DXT5), BC4U (RGTC1), BC4S (RGTC1), BC5U (RGTC2 or BC5S (RGTC2).
+ * \param width         Texture width.
+ * \param height        Texture height.
+ * \param src           Pointer to compressed blocks.
+ * \param dest          Pointer to the image where the decompressed pixels will be stored.
+ * \param block_size    The size of a compressed block in (8 bytes or 16 bytes)
  */
-void resolve_z_order_compressed_image(std::uint32_t width, std::uint32_t height, const std::uint8_t *src, std::uint8_t *dest, const std::uint8_t bc_type);
+void resolve_z_order_compressed_image(uint32_t width, uint32_t height, const uint8_t *src, uint8_t *dest, const uint32_t block_size);
+
+// Convert x8u24 (or u24x8) format to f32 (only keep the u24 part)
+// Do not use a depth-stencil format as x8d24 is not supported on all GPUs for Vulkan
+void convert_x8u24_to_f32(void *dest, const void *data, const uint32_t width, const uint32_t height, const SceGxmTextureFormat format);
+void convert_U8U3U3U2_to_U8U8U8U8(void *dest, const void *data, const uint32_t width, const uint32_t height);
+void convert_x8u24_to_u24x8(void *dest, const void *data, const uint32_t width, const uint32_t height);
+void convert_f32m_to_f32(void *dest, const void *data, const uint32_t width, const uint32_t height);
+void convert_u2f10f10f10_to_f16f16f16f16(void *dest, const void *data, const uint32_t width, const uint32_t height, const SceGxmTextureFormat format);
 
 void swizzled_texture_to_linear_texture(uint8_t *dest, const uint8_t *src, uint16_t width, uint16_t height, uint8_t bits_per_pixel);
 void tiled_texture_to_linear_texture(uint8_t *dest, const uint8_t *src, uint16_t width, uint16_t height, uint8_t bits_per_pixel);
 
-uint16_t get_upload_mip(const uint16_t true_mip, const uint16_t width, const uint16_t height, const SceGxmTextureBaseFormat base_format);
+uint16_t get_upload_mip(const uint16_t true_mip, const uint16_t width, const uint16_t height);
 
 uint32_t decode_morton2_x(uint32_t code);
 uint32_t decode_morton2_y(uint32_t code);
-void upload_bound_texture(const TextureCacheState &cache, const SceGxmTexture &gxm_texture, const MemState &mem);
-void cache_and_bind_texture(TextureCacheState &cache, const SceGxmTexture &gxm_texture, MemState &mem);
-size_t bits_per_pixel(SceGxmTextureBaseFormat base_format);
-bool is_compressed_format(SceGxmTextureBaseFormat base_format);
+uint32_t encode_morton(uint16_t x, uint16_t y, uint16_t width, uint16_t height);
 bool can_texture_be_unswizzled_without_decode(SceGxmTextureBaseFormat fmt, bool is_vulkan);
-size_t get_compressed_size(SceGxmTextureBaseFormat base_format, std::uint32_t width, std::uint32_t height);
-TextureCacheHash hash_texture_data(const SceGxmTexture &texture, const MemState &mem);
-size_t texture_size(const SceGxmTexture &texture);
+uint32_t get_compressed_size(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height);
+uint64_t hash_texture_data(const SceGxmTexture &texture, uint32_t texture_size, const MemState &mem);
+// hash texture used for texture replacement such that byte in the stride are not hashed
+// this prevent texture duplication in case there are random bytes in the stride
+uint64_t hash_texture_nostride(const SceGxmTexture &texture, const MemState &mem);
 bool convert_base_texture_format_to_base_color_format(SceGxmTextureBaseFormat format, SceGxmColorBaseFormat &color_format);
 
 } // namespace texture

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,35 +15,39 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceMotion.h"
+#include <module/module.h>
 
+#include <ctrl/state.h>
 #include <motion/functions.h>
 #include <motion/motion.h>
 
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceMotion);
 
-EXPORT(int, sceMotionGetAngleThreshold) {
+EXPORT(SceFloat, sceMotionGetAngleThreshold) {
     TRACY_FUNC(sceMotionGetAngleThreshold);
-    return UNIMPLEMENTED();
+    return get_angle_threshold(emuenv.motion);
 }
 
 EXPORT(int, sceMotionGetBasicOrientation, SceFVector3 *basicOrientation) {
     TRACY_FUNC(sceMotionGetBasicOrientation, basicOrientation);
-    if (!basicOrientation)
+    if (!emuenv.motion.is_sampling) {
+        return SCE_MOTION_ERROR_NOT_SAMPLING;
+    }
+    if (basicOrientation == nullptr) {
         return RET_ERROR(SCE_MOTION_ERROR_NULL_PARAMETER);
+    }
 
-    STUBBED("set default value");
-    basicOrientation->x = 0;
-    basicOrientation->y = 0;
-    basicOrientation->z = 1;
+    std::lock_guard<std::mutex> guard(emuenv.motion.mutex);
 
-    return 0;
+    *basicOrientation = get_basic_orientation(emuenv.motion);
+
+    return SCE_MOTION_OK;
 }
 
 EXPORT(SceBool, sceMotionGetDeadband) {
     TRACY_FUNC(sceMotionGetDeadband);
-    return UNIMPLEMENTED();
+    return get_deadband(emuenv.motion);
 }
 
 EXPORT(int, sceMotionGetDeadbandExt) {
@@ -58,7 +62,7 @@ EXPORT(int, sceMotionGetDeviceLocation, SceMotionDeviceLocation *devLocation) {
 
 EXPORT(SceBool, sceMotionGetGyroBiasCorrection) {
     TRACY_FUNC(sceMotionGetGyroBiasCorrection);
-    return UNIMPLEMENTED();
+    return get_gyro_bias_correction(emuenv.motion);
 }
 
 EXPORT(SceBool, sceMotionGetMagnetometerState) {
@@ -68,23 +72,94 @@ EXPORT(SceBool, sceMotionGetMagnetometerState) {
 
 EXPORT(int, sceMotionGetSensorState, SceMotionSensorState *sensorState, int numRecords) {
     TRACY_FUNC(sceMotionGetSensorState, sensorState, numRecords);
-    return UNIMPLEMENTED();
+    if (!emuenv.motion.is_sampling) {
+        return SCE_MOTION_ERROR_NOT_SAMPLING;
+    }
+    if (numRecords >= SCE_MOTION_MAX_NUM_STATES) {
+        return SCE_MOTION_ERROR_OUT_OF_BOUNDS;
+    }
+    if (sensorState == nullptr) {
+        return RET_ERROR(SCE_MOTION_ERROR_NULL_PARAMETER);
+    }
+
+    if (emuenv.ctrl.has_motion_support && !emuenv.cfg.disable_motion) {
+        std::lock_guard<std::mutex> guard(emuenv.motion.mutex);
+        sensorState->accelerometer = get_acceleration(emuenv.motion);
+        sensorState->gyro = get_gyroscope(emuenv.motion);
+
+        sensorState->timestamp = emuenv.motion.last_accel_timestamp;
+        sensorState->counter = emuenv.motion.last_counter;
+        sensorState->hostTimestamp = sensorState->timestamp;
+        sensorState->dataInfo = 0;
+    } else {
+        // some default values
+        memset(sensorState, 0, sizeof(*sensorState));
+        sensorState->accelerometer.z = -1.0;
+
+        std::chrono::time_point<std::chrono::steady_clock> ts = std::chrono::steady_clock::now();
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(ts.time_since_epoch()).count();
+        sensorState->timestamp = timestamp;
+        sensorState->hostTimestamp = timestamp;
+
+        sensorState->counter = emuenv.motion.last_counter++;
+    }
+
+    for (int i = 1; i < numRecords; i++)
+        sensorState[i] = sensorState[0];
+
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionGetState, SceMotionState *motionState) {
     TRACY_FUNC(sceMotionGetState, motionState);
-    if (!motionState)
+    if (!emuenv.motion.is_sampling) {
+        return SCE_MOTION_ERROR_NOT_SAMPLING;
+    }
+    if (motionState == nullptr) {
         return RET_ERROR(SCE_MOTION_ERROR_NULL_PARAMETER);
+    }
 
-    STUBBED("Set value to zero");
+    if (emuenv.ctrl.has_motion_support && !emuenv.cfg.disable_motion) {
+        std::lock_guard<std::mutex> guard(emuenv.motion.mutex);
+        motionState->timestamp = emuenv.motion.last_accel_timestamp;
 
-    // Set 0 to all values of motionState struct
-    memset(motionState, 0, sizeof(SceMotionState));
+        motionState->acceleration = get_acceleration(emuenv.motion);
+        motionState->angularVelocity = get_gyroscope(emuenv.motion);
 
-    // Set default position to devicePosition
-    motionState->deviceQuat.z = 1;
+        Util::Quaternion dev_quat = get_orientation(emuenv.motion);
+        motionState->basicOrientation = get_basic_orientation(emuenv.motion);
 
-    return UNIMPLEMENTED();
+        static_assert(sizeof(motionState->deviceQuat) == sizeof(dev_quat));
+        memcpy(&motionState->deviceQuat, &dev_quat, sizeof(motionState->deviceQuat));
+
+        *reinterpret_cast<decltype(dev_quat.ToMatrix()) *>(&motionState->rotationMatrix) = dev_quat.ToMatrix();
+        // not right, but we can't do better without a magnetometer
+        memcpy(&motionState->nedMatrix, &motionState->rotationMatrix, sizeof(motionState->nedMatrix));
+
+        motionState->hostTimestamp = motionState->timestamp;
+        // set it as unstable because we don't have one
+        motionState->magnFieldStability = SCE_MOTION_MAGNETIC_FIELD_UNSTABLE;
+        motionState->dataInfo = 0;
+    } else {
+        // put some default values
+        memset(motionState, 0, sizeof(SceMotionState));
+
+        std::chrono::time_point<std::chrono::steady_clock> ts = std::chrono::steady_clock::now();
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(ts.time_since_epoch()).count();
+        motionState->timestamp = timestamp;
+        motionState->hostTimestamp = timestamp;
+
+        motionState->acceleration.z = -1.0;
+        motionState->deviceQuat.z = 1;
+        for (int i = 0; i < 4; i++) {
+            // identity matrices
+            reinterpret_cast<float *>(&motionState->rotationMatrix.x.x)[i * 4 + i] = 1;
+            reinterpret_cast<float *>(&motionState->nedMatrix.x.x)[i * 4 + i] = 1;
+        }
+    }
+
+    CALL_EXPORT(sceMotionGetBasicOrientation, &motionState->basicOrientation);
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionGetStateExt) {
@@ -99,7 +174,7 @@ EXPORT(int, sceMotionGetStateInternal) {
 
 EXPORT(SceBool, sceMotionGetTiltCorrection) {
     TRACY_FUNC(sceMotionGetTiltCorrection);
-    return UNIMPLEMENTED();
+    return get_tilt_correction(emuenv.motion);
 }
 
 EXPORT(int, sceMotionGetTiltCorrectionExt) {
@@ -124,7 +199,10 @@ EXPORT(int, sceMotionMagnetometerOn) {
 
 EXPORT(int, sceMotionReset) {
     TRACY_FUNC(sceMotionReset);
-    return UNIMPLEMENTED();
+    std::lock_guard<std::mutex> guard(emuenv.motion.mutex);
+    emuenv.motion.motion_data.ResetQuaternion();
+    emuenv.motion.motion_data.ResetRotations();
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionResetExt) {
@@ -134,17 +212,25 @@ EXPORT(int, sceMotionResetExt) {
 
 EXPORT(int, sceMotionRotateYaw, const float radians) {
     TRACY_FUNC(sceMotionRotateYaw, radians);
-    return UNIMPLEMENTED();
+    emuenv.motion.motion_data.RotateYaw(radians);
+    return SCE_MOTION_OK;
 }
 
-EXPORT(int, sceMotionSetAngleThreshold, const float angle) {
+EXPORT(int, sceMotionSetAngleThreshold, SceFloat angle) {
     TRACY_FUNC(sceMotionSetAngleThreshold, angle);
-    return UNIMPLEMENTED();
+    if (std::isnan(angle) || angle > 45.0f) {
+        return SCE_MOTION_ERROR_ANGLE_OUT_OF_RANGE;
+    }
+
+    set_angle_threshold(emuenv.motion, angle);
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionSetDeadband, SceBool setValue) {
     TRACY_FUNC(sceMotionSetDeadband, setValue);
-    return UNIMPLEMENTED();
+    set_deadband(emuenv.motion, setValue);
+
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionSetDeadbandExt) {
@@ -154,12 +240,16 @@ EXPORT(int, sceMotionSetDeadbandExt) {
 
 EXPORT(int, sceMotionSetGyroBiasCorrection, SceBool setValue) {
     TRACY_FUNC(sceMotionSetGyroBiasCorrection, setValue);
-    return UNIMPLEMENTED();
+    set_gyro_bias_correction(emuenv.motion, setValue);
+
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionSetTiltCorrection, SceBool setValue) {
     TRACY_FUNC(sceMotionSetTiltCorrection, setValue);
-    return UNIMPLEMENTED();
+    set_tilt_correction(emuenv.motion, setValue);
+
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionSetTiltCorrectionExt) {
@@ -169,7 +259,12 @@ EXPORT(int, sceMotionSetTiltCorrectionExt) {
 
 EXPORT(int, sceMotionStartSampling) {
     TRACY_FUNC(sceMotionStartSampling);
-    return UNIMPLEMENTED();
+    if (emuenv.motion.is_sampling) {
+        return SCE_MOTION_ERROR_ALREADY_SAMPLING;
+    }
+
+    emuenv.motion.is_sampling = true;
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionStartSamplingExt) {
@@ -179,7 +274,12 @@ EXPORT(int, sceMotionStartSamplingExt) {
 
 EXPORT(int, sceMotionStopSampling) {
     TRACY_FUNC(sceMotionStopSampling);
-    return UNIMPLEMENTED();
+    if (!emuenv.motion.is_sampling) {
+        return SCE_MOTION_ERROR_NOT_SAMPLING;
+    }
+
+    emuenv.motion.is_sampling = false;
+    return SCE_MOTION_OK;
 }
 
 EXPORT(int, sceMotionStopSamplingExt) {
@@ -191,34 +291,3 @@ EXPORT(int, sceMotionTermLibraryExt) {
     TRACY_FUNC(sceMotionTermLibraryExt);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceMotionGetAngleThreshold)
-BRIDGE_IMPL(sceMotionGetBasicOrientation)
-BRIDGE_IMPL(sceMotionGetDeadband)
-BRIDGE_IMPL(sceMotionGetDeadbandExt)
-BRIDGE_IMPL(sceMotionGetDeviceLocation)
-BRIDGE_IMPL(sceMotionGetGyroBiasCorrection)
-BRIDGE_IMPL(sceMotionGetMagnetometerState)
-BRIDGE_IMPL(sceMotionGetSensorState)
-BRIDGE_IMPL(sceMotionGetState)
-BRIDGE_IMPL(sceMotionGetStateExt)
-BRIDGE_IMPL(sceMotionGetStateInternal)
-BRIDGE_IMPL(sceMotionGetTiltCorrection)
-BRIDGE_IMPL(sceMotionGetTiltCorrectionExt)
-BRIDGE_IMPL(sceMotionInitLibraryExt)
-BRIDGE_IMPL(sceMotionMagnetometerOff)
-BRIDGE_IMPL(sceMotionMagnetometerOn)
-BRIDGE_IMPL(sceMotionReset)
-BRIDGE_IMPL(sceMotionResetExt)
-BRIDGE_IMPL(sceMotionRotateYaw)
-BRIDGE_IMPL(sceMotionSetAngleThreshold)
-BRIDGE_IMPL(sceMotionSetDeadband)
-BRIDGE_IMPL(sceMotionSetDeadbandExt)
-BRIDGE_IMPL(sceMotionSetGyroBiasCorrection)
-BRIDGE_IMPL(sceMotionSetTiltCorrection)
-BRIDGE_IMPL(sceMotionSetTiltCorrectionExt)
-BRIDGE_IMPL(sceMotionStartSampling)
-BRIDGE_IMPL(sceMotionStartSamplingExt)
-BRIDGE_IMPL(sceMotionStopSampling)
-BRIDGE_IMPL(sceMotionStopSamplingExt)
-BRIDGE_IMPL(sceMotionTermLibraryExt)

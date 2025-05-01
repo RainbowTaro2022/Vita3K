@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceMp4.h"
+#include <module/module.h>
 
 EXPORT(int, sceMp4CloseFile) {
     return UNIMPLEMENTED();
@@ -72,18 +72,3 @@ EXPORT(int, sceMp4StartFileStreaming) {
 EXPORT(int, sceMp4TimeToPTS) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceMp4CloseFile)
-BRIDGE_IMPL(sceMp4EnableStream)
-BRIDGE_IMPL(sceMp4GetNextUnit)
-BRIDGE_IMPL(sceMp4GetNextUnit2Ref)
-BRIDGE_IMPL(sceMp4GetNextUnit3Ref)
-BRIDGE_IMPL(sceMp4GetNextUnitData)
-BRIDGE_IMPL(sceMp4GetStreamInfo)
-BRIDGE_IMPL(sceMp4JumpPTS)
-BRIDGE_IMPL(sceMp4OpenFile)
-BRIDGE_IMPL(sceMp4PTSToTime)
-BRIDGE_IMPL(sceMp4ReleaseBuffer)
-BRIDGE_IMPL(sceMp4Reset)
-BRIDGE_IMPL(sceMp4StartFileStreaming)
-BRIDGE_IMPL(sceMp4TimeToPTS)

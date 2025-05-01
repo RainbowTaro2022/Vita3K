@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -27,19 +27,21 @@ extern "C" {
 
 namespace ngs {
 
-void PlayerModule::on_state_change(ModuleData &data, const VoiceState previous) {
+void PlayerModule::on_state_change(const MemState &mem, ModuleData &data, const VoiceState previous) {
     SceNgsPlayerStates *state = data.get_state<SceNgsPlayerStates>();
-    if (data.parent->state == VOICE_STATE_AVAILABLE) {
-        state->current_byte_position_in_buffer = 0;
-        state->current_loop_count = 0;
-        state->current_buffer = 0;
-    } else if (data.parent->is_keyed_off) {
+    SceNgsPlayerParams *params = data.get_parameters<SceNgsPlayerParams>(mem);
+    if (data.parent->state == VOICE_STATE_ACTIVE && previous == VOICE_STATE_AVAILABLE) {
         state->samples_generated_since_key_on = 0;
         state->bytes_consumed_since_key_on = 0;
+        state->current_buffer = params->start_buffer;
+        state->current_byte_position_in_buffer = params->start_bytes;
+        state->current_loop_count = 0;
 
-        ADPCMHistory hist_empty{};
-        std::fill_n(state->adpcm_history, SCE_NGS_PLAYER_MAX_PCM_CHANNELS, hist_empty);
-
+        memset(&state->adpcm_history, 0, sizeof(state->adpcm_history));
+    } else if (data.parent->is_keyed_off) {
+        state->current_buffer = params->start_buffer;
+        state->current_byte_position_in_buffer = params->start_bytes;
+        state->current_loop_count = 0;
         state->reset_swr = true;
     }
 }
@@ -47,7 +49,28 @@ void PlayerModule::on_state_change(ModuleData &data, const VoiceState previous) 
 void PlayerModule::on_param_change(const MemState &mem, ModuleData &data) {
     SceNgsPlayerStates *state = data.get_state<SceNgsPlayerStates>();
     const SceNgsPlayerParams *old_params = reinterpret_cast<SceNgsPlayerParams *>(data.last_info.data());
-    const SceNgsPlayerParams *new_params = reinterpret_cast<SceNgsPlayerParams *>(data.info.data.get(mem));
+    SceNgsPlayerParams *new_params = static_cast<SceNgsPlayerParams *>(data.info.data.get(mem));
+
+    // check for invalid playback values
+    const auto is_invalid_playback_value = [](const float playback_value, const float max_value) {
+        return isnan(playback_value) || (playback_value < 0.f) || (playback_value > max_value);
+    };
+
+    if (is_invalid_playback_value(new_params->playback_scalar, 10.f)) {
+        new_params->playback_scalar = old_params->playback_scalar;
+        LOG_ERROR_ONCE("Invalid playback rate scaling.");
+        if (is_invalid_playback_value(new_params->playback_scalar, 10.f)) {
+            new_params->playback_scalar = 1.0;
+        }
+    }
+
+    if (is_invalid_playback_value(new_params->playback_frequency, 192000.f)) {
+        new_params->playback_frequency = old_params->playback_frequency;
+        LOG_ERROR_ONCE("Invalid playback frequency.");
+        if (is_invalid_playback_value(new_params->playback_frequency, 192000.f)) {
+            new_params->playback_frequency = 48000.f;
+        }
+    }
 
     // if playback scaling changed, reset the resampler
     if (old_params->playback_frequency != new_params->playback_frequency || old_params->playback_scalar != new_params->playback_scalar) {
@@ -73,7 +96,7 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
     // If decoder hasn't been initialized
     if (!decoder) {
         // Create decoder specifying the desired destination sample rate
-        decoder = std::make_unique<PCMDecoderState>(sample_rate);
+        decoder = std::make_unique<PCMDecoderState>(static_cast<float>(sample_rate));
     }
 
     // If the amount of samples already processed and pending to be passed is smaller than the amount of samples of the audio buffer
@@ -91,75 +114,49 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
             // Ran out of data, supply new
             // Decode new data and deliver them
             // Let's open our context
-            if (state->current_buffer == -1) {
-                // If no buffer is found, stop processing
+            if ((state->current_buffer == -1)
+                || !params->buffer_params[state->current_buffer].buffer
+                || (params->buffer_params[state->current_buffer].bytes_count == 0)) {
+                // Stop processing if no valid buffer is available or if the buffer is empty
                 finished = true;
                 break;
             }
             // If the current byte position in the buffer exceeds the total amount of bytes in the buffer
             else if (state->current_byte_position_in_buffer >= params->buffer_params[state->current_buffer].bytes_count) {
-                if (params->buffer_params[state->current_buffer].bytes_count == 0) {
-                    // check if at least one of the next buffers has data
-                    bool has_data = false;
-                    SceInt32 buffer_test = state->current_buffer;
-
-                    for (int i = 0; buffer_test != -1 && i < SCE_NGS_PLAYER_MAX_BUFFERS; i++) {
-                        if (params->buffer_params[buffer_test].bytes_count != 0) {
-                            has_data = true;
-                            break;
-                        }
-                        buffer_test = params->buffer_params[buffer_test].next_buffer_index;
-                    }
-
-                    if (!has_data) {
-                        // no data was found in any of the next buffer
-                        finished = true;
-                        break;
-                    }
-                }
-
                 const int32_t prev_index = state->current_buffer;
+                state->current_byte_position_in_buffer = 0;
+                state->current_loop_count++;
+
+                voice_lock.unlock();
+                scheduler_lock.unlock();
 
                 // Enable looping over the buffer if needed
-                if (params->buffer_params[state->current_buffer].loop_count != -1) {
-                    state->current_loop_count++;
-                    state->current_byte_position_in_buffer = 0;
+                if (params->buffer_params[state->current_buffer].loop_count != -1
+                    && state->current_loop_count > params->buffer_params[state->current_buffer].loop_count) {
+                    state->current_buffer = params->buffer_params[state->current_buffer].next_buffer_index;
+                    state->current_loop_count = 0;
 
-                    if (state->current_loop_count > params->buffer_params[state->current_buffer].loop_count) {
-                        state->current_buffer = params->buffer_params[state->current_buffer].next_buffer_index;
-                        state->current_loop_count = 0;
+                    if ((state->current_buffer == -1)
+                        || !params->buffer_params[state->current_buffer].buffer
+                        || (params->buffer_params[state->current_buffer].bytes_count == 0)) {
+                        data.invoke_callback(kern, mem, thread_id, SCE_NGS_PLAYER_END_OF_DATA, 0, 0);
 
-                        voice_lock.unlock();
-                        scheduler_lock.unlock();
-
-                        if (state->current_buffer == -1) {
-                            data.invoke_callback(kern, mem, thread_id, SCE_NGS_PLAYER_END_OF_DATA, 0, 0);
-                            finished = true;
-                            // TODO: Free all occupied input routes
-                            // unroute_occupied(mem, voice);
-                            scheduler_lock.lock();
-                            voice_lock.lock();
-                            break;
-                        } else {
-                            data.invoke_callback(kern, mem, thread_id, SCE_NGS_PLAYER_SWAPPED_BUFFER, prev_index,
-                                params->buffer_params[state->current_buffer].buffer.address());
-                        }
-
+                        // we are done
+                        finished = true;
                         scheduler_lock.lock();
                         voice_lock.lock();
+                        break;
+                    } else {
+                        data.invoke_callback(kern, mem, thread_id, SCE_NGS_PLAYER_SWAPPED_BUFFER, prev_index,
+                            params->buffer_params[state->current_buffer].buffer.address());
                     }
                 } else {
-                    voice_lock.unlock();
-                    scheduler_lock.unlock();
-
                     data.invoke_callback(kern, mem, thread_id, SCE_NGS_PLAYER_LOOPED_BUFFER, state->current_loop_count,
                         params->buffer_params[state->current_buffer].buffer.address());
-
-                    scheduler_lock.lock();
-                    voice_lock.lock();
                 }
 
-                state->current_byte_position_in_buffer = 0;
+                scheduler_lock.lock();
+                voice_lock.lock();
             }
 
             if (data.extra_storage.size() < sizeof(float) * 2 * granularity
@@ -178,11 +175,10 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
                 auto *input = params->buffer_params[state->current_buffer].buffer.cast<uint8_t>().get(mem);
 
                 DecoderSize samples_count;
-
                 // we need to know how many samples (not bytes!) we need to send (just enough for the system granularity)
                 uint32_t samples_needed = granularity - state->decoded_samples_pending;
 
-                if (params->playback_scalar != 1.0) {
+                if (params->playback_scalar != 1.0f) {
                     samples_needed = static_cast<uint32_t>(samples_needed * params->playback_scalar) + 0x10;
                 }
                 if (static_cast<int>(params->playback_frequency) != sample_rate) {
@@ -214,10 +210,9 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
                 decoder->receive(nullptr, &samples_count);
 
                 // Playback rate scaling
-                if (params->playback_scalar != 1 || static_cast<int>(round(params->playback_frequency)) != sample_rate) {
-                    static bool LOG_PLAYBACK_SCALING = true;
-                    LOG_INFO_IF(LOG_PLAYBACK_SCALING, "The currently running game requests playback rate scaling when decoding audio. Audio might crackle.");
-                    LOG_PLAYBACK_SCALING = false;
+                float src_sample_rate = std::ceil(params->playback_frequency);
+                if ((params->playback_scalar != 1.f) || (static_cast<int>(src_sample_rate) != sample_rate)) {
+                    LOG_INFO_ONCE("The currently running game requests playback rate scaling when decoding audio. Audio might crackle.");
 
                     // Received decoded samples from decoder
                     std::vector<uint8_t> decoded_data(samples_count.samples * sizeof(float) * 2, 0);
@@ -226,9 +221,8 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
                     decoder->receive(decoded_data.data(), nullptr);
 
                     // resample the audio
-                    int src_sample_rate = static_cast<int>(params->playback_frequency);
-                    if (params->playback_scalar != 1.0)
-                        src_sample_rate = static_cast<int>(src_sample_rate * params->playback_scalar);
+                    if (params->playback_scalar != 1.0f)
+                        src_sample_rate *= params->playback_scalar;
 
                     if (!state->swr || state->reset_swr) {
                         if (state->swr)
@@ -237,7 +231,7 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
                         AVChannelLayout layout_stereo = AV_CHANNEL_LAYOUT_STEREO;
                         int ret = swr_alloc_set_opts2(&state->swr,
                             &layout_stereo, AV_SAMPLE_FMT_FLT, sample_rate,
-                            &layout_stereo, AV_SAMPLE_FMT_FLT, src_sample_rate,
+                            &layout_stereo, AV_SAMPLE_FMT_FLT, static_cast<int>(src_sample_rate),
                             0, nullptr);
                         assert(ret == 0);
 
@@ -296,16 +290,6 @@ bool PlayerModule::process(KernelState &kern, const MemState &mem, const SceUID 
     state->decoded_samples_passed += samples_to_be_passed;
     state->samples_generated_since_key_on += samples_to_be_passed * params->channels;
     state->samples_generated_total += samples_to_be_passed * params->channels;
-
-    if (finished) {
-        state->samples_generated_since_key_on = 0;
-        state->bytes_consumed_since_key_on = 0;
-
-        ADPCMHistory hist_empty{};
-        std::fill_n(state->adpcm_history, SCE_NGS_PLAYER_MAX_PCM_CHANNELS, hist_empty);
-
-        state->reset_swr = true;
-    }
 
     return finished;
 }

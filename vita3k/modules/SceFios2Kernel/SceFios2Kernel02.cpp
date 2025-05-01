@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,10 +15,23 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceFios2Kernel02.h"
+#include <module/module.h>
 
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceFios2Kernel);
+
+struct sceFiosKernelOverlayResolveWithRangeSync02_opt {
+    Ptr<char> pOutPath;
+    SceSize maxPath;
+    char loOrderFilter;
+    char hiOrderFilter;
+    char reserved1;
+    char reserved2;
+    int reserved3;
+    int reserved4;
+    int reserved5;
+    int reserved6;
+};
 
 EXPORT(int, sceFiosKernelOverlayAddForProcess02) {
     return UNIMPLEMENTED();
@@ -63,14 +76,3 @@ EXPORT(int, sceFiosKernelOverlayThreadIsDisabled02) {
 EXPORT(int, sceFiosKernelOverlayThreadSetDisabled02) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceFiosKernelOverlayAddForProcess02)
-BRIDGE_IMPL(sceFiosKernelOverlayGetInfoForProcess02)
-BRIDGE_IMPL(sceFiosKernelOverlayGetList02)
-BRIDGE_IMPL(sceFiosKernelOverlayGetRecommendedScheduler02)
-BRIDGE_IMPL(sceFiosKernelOverlayModifyForProcess02)
-BRIDGE_IMPL(sceFiosKernelOverlayRemoveForProcess02)
-BRIDGE_IMPL(sceFiosKernelOverlayResolveSync02)
-BRIDGE_IMPL(sceFiosKernelOverlayResolveWithRangeSync02)
-BRIDGE_IMPL(sceFiosKernelOverlayThreadIsDisabled02)
-BRIDGE_IMPL(sceFiosKernelOverlayThreadSetDisabled02)

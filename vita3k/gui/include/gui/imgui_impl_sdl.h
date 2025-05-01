@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,18 +17,14 @@
 
 #pragma once
 
-#include <imgui.h>
-
 #include <emuenv/window.h>
 #include <gui/imgui_impl_sdl_state.h>
-
-#include <string>
 
 union SDL_Event;
 struct SDL_Window;
 struct SDL_Cursor;
 
-IMGUI_API ImGui_State *ImGui_ImplSdl_Init(renderer::State *renderer, SDL_Window *window, const std::string &base_path);
+IMGUI_API ImGui_State *ImGui_ImplSdl_Init(renderer::State *renderer, SDL_Window *window);
 IMGUI_API void ImGui_ImplSdl_Shutdown(ImGui_State *state);
 IMGUI_API void ImGui_ImplSdl_NewFrame(ImGui_State *state);
 IMGUI_API void ImGui_ImplSdl_RenderDrawData(ImGui_State *state);

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@ void sync_clipping(VKContext &context) {
     if (!context.render_target)
         return;
 
-    const int res_multiplier = context.state.res_multiplier;
+    const float res_multiplier = context.state.res_multiplier;
 
     const int scissor_x = context.record.region_clip_min.x;
     const int scissor_y = context.record.region_clip_min.y;
@@ -48,8 +48,8 @@ void sync_clipping(VKContext &context) {
         break;
     case SCE_GXM_REGION_CLIP_OUTSIDE:
         context.scissor = vk::Rect2D{
-            { scissor_x * res_multiplier, scissor_y * res_multiplier },
-            { scissor_w * res_multiplier, scissor_h * res_multiplier }
+            { static_cast<int32_t>(scissor_x * res_multiplier), static_cast<int32_t>(scissor_y * res_multiplier) },
+            { static_cast<uint32_t>(scissor_w * res_multiplier), static_cast<uint32_t>(scissor_h * res_multiplier) }
         };
         break;
     case SCE_GXM_REGION_CLIP_INSIDE:
@@ -99,20 +99,6 @@ void sync_stencil_func(VKContext &context, const bool is_back) {
     context.render_cmd.setStencilWriteMask(face, state->write_mask);
 }
 
-void sync_mask(VKContext &context, const MemState &mem) {
-    if (!context.state.features.use_mask_bit)
-        return;
-
-    auto control = context.record.depth_stencil_surface.control.content;
-    float initial_val = (control & SceGxmDepthStencilControl::mask_bit) ? 1.0f : 0.0f;
-
-    std::array<float, 4> clear_bytes = { initial_val, initial_val, initial_val, initial_val };
-    vk::ClearColorValue clear_color{ clear_bytes };
-    context.render_target->mask.transition_to_discard(context.render_cmd, vkutil::ImageLayout::TransferDst);
-    context.render_cmd.clearColorImage(context.render_target->mask.image, vk::ImageLayout::eTransferDstOptimal, clear_color, vkutil::color_subresource_range);
-    context.render_target->mask.transition_to(context.render_cmd, vkutil::ImageLayout::StorageImage);
-}
-
 void sync_depth_bias(VKContext &context) {
     if (!context.is_recording)
         return;
@@ -121,12 +107,11 @@ void sync_depth_bias(VKContext &context) {
 }
 
 void sync_depth_data(VKContext &context) {
-    // If force load is enabled to load saved depth and depth data memory exists (the second condition is just for safe, may sometimes contradict its usefulness, hopefully won't)
-    if ((context.record.depth_stencil_surface.zlsControl & SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED) || (!context.record.depth_stencil_surface.depthData))
+    if (context.record.depth_stencil_surface.force_load)
         return;
 
     vk::ClearDepthStencilValue clear_value{
-        .depth = context.record.depth_stencil_surface.backgroundDepth
+        .depth = context.record.depth_stencil_surface.background_depth
     };
     vk::ClearAttachment clear_attachment{
         .aspectMask = vk::ImageAspectFlagBits::eDepth,
@@ -143,11 +128,11 @@ void sync_depth_data(VKContext &context) {
 }
 
 void sync_stencil_data(VKContext &context, const MemState &mem) {
-    if (context.record.depth_stencil_surface.zlsControl & SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED)
+    if (context.record.depth_stencil_surface.force_load)
         return;
 
     vk::ClearDepthStencilValue clear_value{
-        .stencil = context.record.depth_stencil_surface.control.content & SceGxmDepthStencilControl::stencil_bits
+        .stencil = context.record.depth_stencil_surface.stencil
     };
     vk::ClearAttachment clear_attachment{
         .aspectMask = vk::ImageAspectFlagBits::eStencil,
@@ -168,7 +153,7 @@ void sync_point_line_width(VKContext &context, const bool is_front) {
         return;
 
     if (is_front && context.state.physical_device_features.wideLines)
-        context.render_cmd.setLineWidth(static_cast<float>(context.record.line_width));
+        context.render_cmd.setLineWidth(context.record.line_width * context.state.res_multiplier);
 }
 
 void sync_viewport_flat(VKContext &context) {
@@ -196,7 +181,7 @@ void sync_viewport_real(VKContext &context, const float xOffset, const float yOf
     const float x = xOffset - std::abs(xScale);
     const float y = yOffset - yScale;
 
-    const int res_multiplier = context.state.res_multiplier;
+    const float res_multiplier = context.state.res_multiplier;
 
     // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkViewport.html
     // https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#vertexpostproc-viewport
@@ -251,10 +236,7 @@ void sync_visibility_index(VKContext &context, bool enable, uint32_t index, bool
     }
 
     if (index >= context.current_visibility_buffer->size) {
-        static bool has_happened = false;
-        LOG_WARN_IF(!has_happened, "Using visibility index {} which is too big for the buffer");
-        has_happened = true;
-
+        LOG_WARN_ONCE("Using visibility index {} which is too big for the buffer", index);
         index = 0;
     }
 

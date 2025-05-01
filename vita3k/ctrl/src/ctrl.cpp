@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -31,12 +31,12 @@ static int reserve_port(CtrlState &state) {
     for (int i = 0; i < SCE_CTRL_MAX_WIRELESS_NUM; i++) {
         if (state.free_ports[i]) {
             state.free_ports[i] = false;
-            return i + 1;
+            return i;
         }
     }
 
     // No free port found.
-    return 0;
+    return -1;
 }
 
 SceCtrlExternalInputMode get_type_of_controller(const int idx) {
@@ -44,17 +44,18 @@ SceCtrlExternalInputMode get_type_of_controller(const int idx) {
     return (type == SDL_CONTROLLER_TYPE_PS4) || (type == SDL_CONTROLLER_TYPE_PS5) ? SCE_CTRL_TYPE_DS4 : SCE_CTRL_TYPE_DS3;
 }
 
-static bool operator<(const SDL_JoystickGUID &a, const SDL_JoystickGUID &b) {
-    return memcmp(&a, &b, sizeof(a)) < 0;
-}
-
-void refresh_controllers(CtrlState &state) {
+void refresh_controllers(CtrlState &state, EmuEnvState &emuenv) {
     // Remove disconnected controllers
+    bool found_gyro = false;
+    bool found_accel = false;
     for (ControllerList::iterator controller = state.controllers.begin(); controller != state.controllers.end();) {
         if (SDL_GameControllerGetAttached(controller->second.controller.get())) {
+            found_accel |= controller->second.has_accel;
+            found_gyro |= controller->second.has_gyro;
+
             ++controller;
         } else {
-            state.free_ports[controller->second.port - 1] = true;
+            state.free_ports[controller->second.port] = true;
             controller = state.controllers.erase(controller);
             state.controllers_num--;
         }
@@ -68,17 +69,50 @@ void refresh_controllers(CtrlState &state) {
         }
         if (SDL_IsGameController(joystick_index)) {
             const SDL_JoystickGUID guid = SDL_JoystickGetDeviceGUID(joystick_index);
-            if (state.controllers.find(guid) == state.controllers.end()) {
+            if (!state.controllers.contains(guid)) {
                 Controller new_controller;
                 const GameControllerPtr controller(SDL_GameControllerOpen(joystick_index), SDL_GameControllerClose);
+                if (controller == nullptr) {
+                    continue;
+                }
                 new_controller.controller = controller;
                 new_controller.port = reserve_port(state);
+                if (new_controller.port == -1) { // Port not available
+                    return;
+                }
+                SDL_GameControllerSetPlayerIndex(controller.get(), new_controller.port);
+
+                new_controller.has_gyro = SDL_GameControllerHasSensor(controller.get(), SDL_SENSOR_GYRO);
+                if (new_controller.has_gyro)
+                    SDL_GameControllerSetSensorEnabled(controller.get(), SDL_SENSOR_GYRO, SDL_TRUE);
+                new_controller.has_accel = SDL_GameControllerHasSensor(controller.get(), SDL_SENSOR_ACCEL);
+                if (new_controller.has_accel)
+                    SDL_GameControllerSetSensorEnabled(controller.get(), SDL_SENSOR_ACCEL, SDL_TRUE);
+
+                new_controller.has_led = SDL_GameControllerHasLED(controller.get());
+                if (new_controller.has_led) {
+                    auto &color = emuenv.cfg.controller_led_color;
+                    if (!color.empty()) {
+                        color.resize(3);
+                        SDL_GameControllerSetLED(controller.get(), color[0], color[1], color[2]);
+                    }
+                }
+
+                found_gyro |= new_controller.has_gyro;
+                found_accel |= new_controller.has_accel;
+                new_controller.name = SDL_GameControllerNameForIndex(joystick_index);
+                if (new_controller.name == nullptr) {
+                    state.free_ports[new_controller.port] = true;
+                    continue;
+                }
+
                 state.controllers.emplace(guid, new_controller);
-                state.controllers_name[joystick_index] = SDL_GameControllerNameForIndex(joystick_index);
                 state.controllers_num++;
             }
         }
     }
+
+    state.has_motion_support = found_gyro && found_accel;
 }
 
 static float keys_to_axis(const uint8_t *keys, SDL_Scancode code1, SDL_Scancode code2) {
@@ -110,9 +144,9 @@ static void apply_keyboard(uint32_t *buttons, float axes[4], bool ext, EmuEnvSta
             *buttons |= SCE_CTRL_R3;
     } else {
         if (keys[emuenv.cfg.keyboard_button_l1])
-            *buttons |= SCE_CTRL_LTRIGGER;
+            *buttons |= SCE_CTRL_L;
         if (keys[emuenv.cfg.keyboard_button_r1])
-            *buttons |= SCE_CTRL_RTRIGGER;
+            *buttons |= SCE_CTRL_R;
     }
     if (keys[emuenv.cfg.keyboard_button_select])
         *buttons |= SCE_CTRL_SELECT;
@@ -144,7 +178,7 @@ static void apply_keyboard(uint32_t *buttons, float axes[4], bool ext, EmuEnvSta
 }
 
 static float axis_to_axis(int16_t axis) {
-    const float unsigned_axis = static_cast<float>(axis - INT16_MIN);
+    const auto unsigned_axis = static_cast<float>(axis - INT16_MIN);
     assert(unsigned_axis >= 0);
     assert(unsigned_axis <= UINT16_MAX);
 
@@ -166,9 +200,47 @@ static uint8_t float_to_byte(float f) {
     return static_cast<uint8_t>(clamped * 255);
 }
 
-static void apply_controller(uint32_t *buttons, float axes[4], SDL_GameController *controller, bool ext) {
+static std::array<ControllerBinding, 13> get_controller_bindings(EmuEnvState &emuenv) {
+    return { {
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_BACK]), SCE_CTRL_SELECT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_START]), SCE_CTRL_START },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_UP]), SCE_CTRL_UP },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_RIGHT]), SCE_CTRL_RIGHT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_DOWN]), SCE_CTRL_DOWN },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_LEFT]), SCE_CTRL_LEFT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_LEFTSHOULDER]), SCE_CTRL_L },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER]), SCE_CTRL_R },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_Y]), SCE_CTRL_TRIANGLE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_B]), SCE_CTRL_CIRCLE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_A]), SCE_CTRL_CROSS },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_X]), SCE_CTRL_SQUARE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_GUIDE]), SCE_CTRL_PSBUTTON },
+    } };
+}
+
+std::array<ControllerBinding, 15> get_controller_bindings_ext(EmuEnvState &emuenv) {
+    return { {
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_BACK]), SCE_CTRL_SELECT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_LEFTSTICK]), SCE_CTRL_L3 },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_RIGHTSTICK]), SCE_CTRL_R3 },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_START]), SCE_CTRL_START },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_UP]), SCE_CTRL_UP },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_RIGHT]), SCE_CTRL_RIGHT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_DOWN]), SCE_CTRL_DOWN },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_DPAD_LEFT]), SCE_CTRL_LEFT },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_LEFTSHOULDER]), SCE_CTRL_L1 },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER]), SCE_CTRL_R1 },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_Y]), SCE_CTRL_TRIANGLE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_B]), SCE_CTRL_CIRCLE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_A]), SCE_CTRL_CROSS },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_X]), SCE_CTRL_SQUARE },
+        { static_cast<SDL_GameControllerButton>(emuenv.cfg.controller_binds[SDL_CONTROLLER_BUTTON_GUIDE]), SCE_CTRL_PSBUTTON },
+    } };
+}
+
+static void apply_controller(EmuEnvState &emuenv, uint32_t *buttons, float axes[4], SDL_GameController *controller, bool ext) {
     if (ext) {
-        for (const auto &binding : controller_bindings_ext) {
+        for (const auto &binding : get_controller_bindings_ext(emuenv)) {
             if (SDL_GameControllerGetButton(controller, binding.controller)) {
                 *buttons |= binding.button;
             }
@@ -181,7 +253,7 @@ static void apply_controller(uint32_t *buttons, float axes[4], SDL_GameControlle
             *buttons |= SCE_CTRL_R2;
         }
     } else {
-        for (const auto &binding : controller_bindings) {
+        for (const auto &binding : get_controller_bindings(emuenv)) {
             if (SDL_GameControllerGetButton(controller, binding.controller)) {
                 *buttons |= binding.button;
             }
@@ -195,16 +267,19 @@ static void apply_controller(uint32_t *buttons, float axes[4], SDL_GameControlle
 }
 
 static void retrieve_ctrl_data(EmuEnvState &emuenv, int port, bool is_v2, bool negative, bool from_ext_function, SceUInt32 &buttons, SceUInt8 &lx, SceUInt8 &ly, SceUInt8 &rx, SceUInt8 &ry) {
+    std::lock_guard<std::mutex> guard(emuenv.ctrl.mutex);
+
     if (port == 0) {
         port++;
     }
     CtrlState &state = emuenv.ctrl;
-    refresh_controllers(state);
+    refresh_controllers(state, emuenv);
 
     std::array<float, 4> axes;
     axes.fill(0);
 
     const auto reset_axes = [&]() {
+        // Re-center joysticks to (128,128). Range is (0-255,0-255).
         SceCtrlPadInputMode mode = from_ext_function ? state.input_mode_ext : state.input_mode;
         if (mode == SCE_CTRL_MODE_DIGITAL) {
             lx = 0x80;
@@ -217,11 +292,11 @@ static void retrieve_ctrl_data(EmuEnvState &emuenv, int port, bool is_v2, bool n
             rx = float_to_byte(axes[2]);
             ry = float_to_byte(axes[3]);
         }
-    };
-
-    if (emuenv.common_dialog.status == SCE_COMMON_DIALOG_STATUS_RUNNING) {
         if (negative)
             buttons ^= ~0;
+    };
+
+    if ((emuenv.common_dialog.status == SCE_COMMON_DIALOG_STATUS_RUNNING) || emuenv.drop_inputs) {
         reset_axes();
         return;
     }
@@ -229,16 +304,14 @@ static void retrieve_ctrl_data(EmuEnvState &emuenv, int port, bool is_v2, bool n
     if (port == 1) {
         apply_keyboard(&buttons, axes.data(), is_v2, emuenv);
     }
-    for (const auto &controller : state.controllers) {
-        if (controller.second.port == port) {
-            apply_controller(&buttons, axes.data(), controller.second.controller.get(), is_v2);
+    for (const auto &[_, controller] : state.controllers) {
+        if (controller.port + 1 == port) {
+            // sceCtrl ports are 1-based and SDL_GameController index is 0-based. Need to convert.
+            apply_controller(emuenv, &buttons, axes.data(), controller.controller.get(), is_v2);
         }
     }
 
     reset_axes();
-
-    if (negative)
-        buttons ^= ~0;
 }
 
 int ctrl_get(const SceUID thread_id, EmuEnvState &emuenv, int port, SceCtrlData2 *pData, SceUInt32 count, bool negative, bool is_peek, bool is_v2, bool from_ext) {
@@ -255,16 +328,15 @@ int ctrl_get(const SceUID thread_id, EmuEnvState &emuenv, int port, SceCtrlData2
     if (is_peek) {
         nb_returned_data = count;
     } else {
-        uint64_t vblank_count = emuenv.display.vblank_count;
-        if (vblank_count <= state.last_vcount[port]) {
+        if (emuenv.display.vblank_count.load() <= state.last_vcount[port]) {
             // sceCtrlRead is blocking, wait for the next vsync for the buffer to be updated
             auto thread = emuenv.kernel.get_thread(thread_id);
 
             wait_vblank(emuenv.display, emuenv.kernel, thread, state.last_vcount[port] + 1, false);
-            vblank_count = emuenv.display.vblank_count;
         }
-        nb_returned_data = std::min<int>(count, emuenv.display.vblank_count - state.last_vcount[port]);
-        state.last_vcount[port] = emuenv.display.vblank_count;
+        uint64_t vblank_count = emuenv.display.vblank_count.load();
+        nb_returned_data = std::min<int32_t>(count, vblank_count - state.last_vcount[port]);
+        state.last_vcount[port] = vblank_count;
     }
 
     std::chrono::time_point<std::chrono::steady_clock> ts = std::chrono::steady_clock::now();

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceAvPlayer.h"
+#include <module/module.h>
 
 #include <codec/state.h>
 #include <io/functions.h>
@@ -174,7 +174,7 @@ struct SceAvPlayerStreamInfo {
     SceAvPlayerStreamDetails stream_details;
 };
 
-enum SceAvPlayerErrorCode {
+enum SceAvPlayerErrorCode : uint32_t {
     SCE_AVPLAYER_ERROR_ILLEGAL_ADDR = 0x806a0001,
     SCE_AVPLAYER_ERROR_INVALID_ARGUMENT = 0x806a0002,
     SCE_AVPLAYER_ERROR_NOT_ENOUGH_MEMORY = 0x806a0003,
@@ -226,7 +226,7 @@ static Ptr<uint8_t> get_buffer(const PlayerPtr &player, MediaType media_type,
     return buffer;
 }
 
-void run_event_callback(EmuEnvState &emuenv, const ThreadStatePtr &thread, const PlayerPtr player_info, uint32_t event_id, uint32_t source_id, Ptr<void> event_data) {
+static void run_event_callback(EmuEnvState &emuenv, const ThreadStatePtr &thread, const PlayerPtr &player_info, uint32_t event_id, uint32_t source_id, Ptr<void> event_data) {
     if (player_info->event_manager.event_callback) {
         thread->run_callback(player_info->event_manager.event_callback.address(), { player_info->event_manager.user_data, event_id, source_id, event_data.address() });
     }
@@ -240,17 +240,15 @@ EXPORT(int32_t, sceAvPlayerAddSource, SceUID player_handle, Ptr<const char> path
         return RET_ERROR(SCE_AVPLAYER_ERROR_INVALID_ARGUMENT);
     }
 
-    const auto thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const auto thread = emuenv.kernel.get_thread(thread_id);
 
     auto file_path = expand_path(emuenv.io, path.get(emuenv.mem), emuenv.pref_path);
     if (!fs::exists(file_path) && player_info->file_manager.open_file && player_info->file_manager.close_file && player_info->file_manager.read_file && player_info->file_manager.file_size) {
-        const auto cache_path{ fs::path(emuenv.base_path) / "cache" };
-        if (!fs::exists(cache_path))
-            fs::create_directories(cache_path);
+        fs::create_directories(emuenv.cache_path);
 
         // Create temp media file
-        const auto temp_file_path = cache_path / "temp_vita_media.mp4";
-        std::ofstream temp_file(temp_file_path.string(), std::ios::out | std::ios::binary);
+        const auto temp_file_path = emuenv.cache_path / "temp_vita_media.mp4";
+        fs::ofstream temp_file(temp_file_path, std::ios::out | std::ios::binary);
 
         const Address buf = alloc(emuenv.mem, KiB(512), "AvPlayer buffer");
         const auto buf_ptr = Ptr<char>(buf).get(emuenv.mem);
@@ -271,13 +269,13 @@ EXPORT(int32_t, sceAvPlayerAddSource, SceUID player_handle, Ptr<const char> path
         temp_file.close();
         thread->run_callback(player_info->file_manager.close_file.address(), { player_info->file_manager.user_data });
         if (fs::file_size(temp_file_path) != file_size) {
-            LOG_ERROR("File is corrupted or incomplete: {}", temp_file_path.string());
+            LOG_ERROR("File is corrupted or incomplete: {}", temp_file_path);
             return -1;
         }
-        file_path = temp_file_path.string();
+        file_path = temp_file_path;
     }
 
-    player_info->player.queue(file_path);
+    player_info->player.queue(file_path.string());
     run_event_callback(emuenv, thread, player_info, SCE_AVPLAYER_STATE_BUFFERING, 0, Ptr<void>(0)); // may be important for sound
     run_event_callback(emuenv, thread, player_info, SCE_AVPLAYER_STATE_READY, 0, Ptr<void>(0));
     return 0;
@@ -517,30 +515,9 @@ EXPORT(int, sceAvPlayerStart, SceUID player_handle) {
 
 EXPORT(int, sceAvPlayerStop, SceUID player_handle) {
     const auto state = emuenv.kernel.obj_store.get<AvPlayerState>();
-    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, emuenv.kernel.mutex);
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     player_info->player.free_video();
     const auto thread = emuenv.kernel.get_thread(thread_id);
     run_event_callback(emuenv, thread, player_info, SCE_AVPLAYER_STATE_STOP, 0, Ptr<void>(0));
     return 0;
 }
-
-BRIDGE_IMPL(sceAvPlayerAddSource)
-BRIDGE_IMPL(sceAvPlayerClose)
-BRIDGE_IMPL(sceAvPlayerCurrentTime)
-BRIDGE_IMPL(sceAvPlayerDisableStream)
-BRIDGE_IMPL(sceAvPlayerEnableStream)
-BRIDGE_IMPL(sceAvPlayerGetAudioData)
-BRIDGE_IMPL(sceAvPlayerGetStreamInfo)
-BRIDGE_IMPL(sceAvPlayerGetVideoData)
-BRIDGE_IMPL(sceAvPlayerGetVideoDataEx)
-BRIDGE_IMPL(sceAvPlayerInit)
-BRIDGE_IMPL(sceAvPlayerIsActive)
-BRIDGE_IMPL(sceAvPlayerJumpToTime)
-BRIDGE_IMPL(sceAvPlayerPause)
-BRIDGE_IMPL(sceAvPlayerPostInit)
-BRIDGE_IMPL(sceAvPlayerResume)
-BRIDGE_IMPL(sceAvPlayerSetLooping)
-BRIDGE_IMPL(sceAvPlayerSetTrickSpeed)
-BRIDGE_IMPL(sceAvPlayerStart)
-BRIDGE_IMPL(sceAvPlayerStop)
-BRIDGE_IMPL(sceAvPlayerStreamCount)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceVideoencUser.h"
+#include <module/module.h>
 
 EXPORT(int, sceAvcencCreateEncoder) {
     return UNIMPLEMENTED();
@@ -100,25 +100,3 @@ EXPORT(int, sceVideoencQueryMemSizeInternal) {
 EXPORT(int, sceVideoencTermLibrary) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceAvcencCreateEncoder)
-BRIDGE_IMPL(sceAvcencCreateEncoderBasic)
-BRIDGE_IMPL(sceAvcencCreateEncoderInternal)
-BRIDGE_IMPL(sceAvcencCsc)
-BRIDGE_IMPL(sceAvcencDeleteEncoder)
-BRIDGE_IMPL(sceAvcencEncode)
-BRIDGE_IMPL(sceAvcencEncodeFlush)
-BRIDGE_IMPL(sceAvcencEncodeStop)
-BRIDGE_IMPL(sceAvcencGetNalUnit)
-BRIDGE_IMPL(sceAvcencQueryEncoderMemSize)
-BRIDGE_IMPL(sceAvcencQueryEncoderMemSizeBasic)
-BRIDGE_IMPL(sceAvcencQueryEncoderMemSizeInternal)
-BRIDGE_IMPL(sceAvcencSetAvailablePreset)
-BRIDGE_IMPL(sceAvcencSetEncoderParameter)
-BRIDGE_IMPL(sceVideoencInitLibrary)
-BRIDGE_IMPL(sceVideoencInitLibraryInternal)
-BRIDGE_IMPL(sceVideoencInitLibraryWithUnmapMem)
-BRIDGE_IMPL(sceVideoencInitLibraryWithUnmapMemInternal)
-BRIDGE_IMPL(sceVideoencQueryMemSize)
-BRIDGE_IMPL(sceVideoencQueryMemSizeInternal)
-BRIDGE_IMPL(sceVideoencTermLibrary)

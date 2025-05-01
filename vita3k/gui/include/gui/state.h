@@ -1,5 +1,5 @@
 ﻿// Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,27 +19,17 @@
 
 #include <compat/state.h>
 #include <config/config.h>
-#include <dialog/state.h>
-#include <ime/state.h>
 #include <lang/state.h>
 #include <np/state.h>
 
 #include <imgui.h>
-// Disable warninig here is needed to compile on windows because we
-// are turning some warnings into errors to allow makepkg default flags
-#pragma warning(push)
-#pragma warning(disable : 4774)
 #include <imgui_memory_editor.h>
-#pragma warning(pop)
 
 #include <gui/imgui_impl_sdl_state.h>
-
-#include <glutil/object.h>
 
 #include <atomic>
 #include <mutex>
 #include <optional>
-#include <queue>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -218,36 +208,11 @@ enum NoticeIcon {
     NEW
 };
 
-enum ModulesModeType {
-    MODE,
-    DESCRIPTION,
-};
-
 enum ThemePreviewType {
     PACKAGE,
     HOME,
     LOCK,
 };
-
-enum ShadersCompiledDisplay {
-    Time,
-    Count
-};
-
-static constexpr auto MODULES_MODE_COUNT = 3;
-using ConfigModuleMode = std::array<std::vector<const char *>, MODULES_MODE_COUNT>;
-
-inline ConfigModuleMode init_modules_mode() {
-    ConfigModuleMode m;
-
-    m[ModulesMode::AUTOMATIC] = { "Automatic", "Select Automatic mode to use a preset list of modules." };
-    m[ModulesMode::AUTO_MANUAL] = { "Auto & Manual", "Select this mode to load Automatic module and selected modules from the list below." };
-    m[ModulesMode::MANUAL] = { "Manual", "Select Manual mode to load selected modules from the list below." };
-
-    return m;
-}
-
-const ConfigModuleMode config_modules_mode = init_modules_mode();
 
 inline const std::vector<std::pair<SceSystemParamLang, std::string>> LIST_SYS_LANG = {
     { SCE_SYSTEM_PARAM_LANG_DANISH, "Dansk" },
@@ -268,20 +233,24 @@ inline const std::vector<std::pair<SceSystemParamLang, std::string>> LIST_SYS_LA
     { SCE_SYSTEM_PARAM_LANG_TURKISH, reinterpret_cast<const char *>(u8"Türkçe") },
     { SCE_SYSTEM_PARAM_LANG_JAPANESE, reinterpret_cast<const char *>(u8"日本語") },
     { SCE_SYSTEM_PARAM_LANG_KOREAN, "Korean" },
-    { SCE_SYSTEM_PARAM_LANG_CHINESE_S, "Chinese - Simplified" },
+    { SCE_SYSTEM_PARAM_LANG_CHINESE_S, reinterpret_cast<const char *>(u8"简体中文") },
     { SCE_SYSTEM_PARAM_LANG_CHINESE_T, reinterpret_cast<const char *>(u8"繁體中文") },
 };
 
 struct InfoMessage {
     std::string function;
+    std::string title;
     spdlog::level::level_enum level;
     std::string msg;
 };
 
+// 2.f is enough for the current font size.
+const float FontScaleCandidates[] = { 1.f, 1.5f, 2.f };
+const int FontScaleCandidatesSize = std::size(FontScaleCandidates);
+
 struct GuiState {
     std::unique_ptr<ImGui_State> imgui_state;
 
-    bool renderer_focused = true;
     gui::FileMenuState file_menu;
     gui::DebugMenuState debug_menu;
     gui::ConfigurationMenuState configuration_menu;
@@ -318,8 +287,6 @@ struct GuiState {
 
     std::vector<std::pair<std::string, bool>> modules;
     ImGuiTextFilter module_search_bar;
-
-    GLuint display = 0;
 
     ImGuiTextFilter app_search_bar;
 
@@ -364,7 +331,8 @@ struct GuiState {
 
     std::vector<ImGui_Texture> manuals;
 
-    std::map<ShadersCompiledDisplay, uint64_t> shaders_compiled_display;
+    uint64_t shaders_compiled_display_count = 0;
+    uint64_t shaders_compiled_display_time = 0;
 
     SceUID thread_watch_index = -1;
 
@@ -378,8 +346,8 @@ struct GuiState {
     ImVec2 trophy_window_pos;
 
     // imgui
-    ImFont *monospaced_font{};
-    ImFont *vita_font{};
-    ImFont *large_font{};
+    ImFont *monospaced_font[FontScaleCandidatesSize]{};
+    ImFont *vita_font[FontScaleCandidatesSize]{};
+    ImFont *large_font[FontScaleCandidatesSize]{};
     bool fw_font = false;
 };

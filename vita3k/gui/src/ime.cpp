@@ -1,5 +1,5 @@
 ﻿// Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include <config/functions.h>
 #include <config/state.h>
-#include <mem/functions.h>
+#include <ime/state.h>
 #include <util/string_utils.h>
 
 namespace gui {
@@ -123,10 +123,10 @@ void init_ime_lang(Ime &ime, const SceImeLanguage &lang) {
     // Set Punctuation
     switch (lang) {
     case SCE_IME_LANGUAGE_SPANISH:
-        punct = { { FIRST, { u".", u"¿?" } }, { SECOND, { u",", u"¡!" } } };
+        punct = { { FIRST, { u",", u"¿?" } }, { SECOND, { u".", u"¡!" } } };
         break;
     default:
-        punct = { { FIRST, { u".", u"?" } }, { SECOND, { u",", u"!" } } };
+        punct = { { FIRST, { u",", u"?" } }, { SECOND, { u".", u"!" } } };
         break;
     }
 
@@ -253,19 +253,21 @@ void init_ime_lang(Ime &ime, const SceImeLanguage &lang) {
         size_button = 135.f;
         size_key = 88.f;
         break;
-    };
+    }
 }
 
 static std::map<int, float> key_row_pos = { { FIRST, 11.f }, { SECOND, 69.f }, { THIRD, 127.f } };
 
-static bool numeric_pad = false;
-static std::map<std::string, float> scroll_special;
-
 void draw_ime(Ime &ime, EmuEnvState &emuenv) {
-    const auto display_size = ImGui::GetIO().DisplaySize;
-    const auto RES_SCALE = ImVec2(display_size.x / emuenv.res_width_dpi_scale, display_size.y / emuenv.res_height_dpi_scale);
-    const auto SCALE = ImVec2(RES_SCALE.x * emuenv.dpi_scale, RES_SCALE.y * emuenv.dpi_scale);
-    const auto WINDOW_POS = ImVec2(0.f, display_size.y - (248.f * SCALE.y));
+    static bool numeric_pad = false;
+    static float scroll_special_current;
+    static float scroll_special_max;
+
+    const ImVec2 VIEWPORT_SIZE(emuenv.logical_viewport_size.x, emuenv.logical_viewport_size.y);
+    const ImVec2 VIEWPORT_POS(emuenv.logical_viewport_pos.x, emuenv.logical_viewport_pos.y);
+    const ImVec2 RES_SCALE(emuenv.gui_scale.x, emuenv.gui_scale.y);
+    const ImVec2 SCALE(RES_SCALE.x * emuenv.manual_dpi_scale, RES_SCALE.y * emuenv.manual_dpi_scale);
+
     const auto BUTTON_HEIGHT_SIZE = 52.f * SCALE.y;
     const auto PUNCT_BUTTON_SIZE = ImVec2(56.f * SCALE.x, BUTTON_HEIGHT_SIZE);
     const auto KEY_BUTTON_SIZE = ImVec2(size_key * SCALE.x, BUTTON_HEIGHT_SIZE);
@@ -274,34 +276,43 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
     const auto SPACE = 6.f * SCALE.x;
     const auto MARGE_BORDER = 13.f * SCALE.x;
     const auto LAST_ROW_KEY_POS = 185.f * SCALE.y;
-    const auto BUTTON_POS_X = display_size.x - MARGE_BORDER - BUTTON_SIZE.x;
-    const auto ENTER_BUTTON_POS_X = display_size.x - MARGE_BORDER - ENTER_BUTTON_SIZE.x;
+    const auto BUTTON_POS_X = VIEWPORT_SIZE.x - MARGE_BORDER - BUTTON_SIZE.x;
+    const auto ENTER_BUTTON_POS_X = VIEWPORT_SIZE.x - MARGE_BORDER - ENTER_BUTTON_SIZE.x;
     const auto NUM_BUTTON_SIZE = ImVec2(74.f * SCALE.x, BUTTON_HEIGHT_SIZE);
     const auto NUM_BUTTON_POS_X = BUTTON_POS_X - (3 * NUM_BUTTON_SIZE.x) - (SPACE * 3);
     const auto SPACE_BUTTON_SIZE = ImVec2(numeric_pad ? 216.f * SCALE.x : 276.f * SCALE.x, KEY_BUTTON_SIZE.y);
     const auto SPACE_BUTTON_POS = ImVec2(numeric_pad ? NUM_BUTTON_POS_X - SPACE - SPACE_BUTTON_SIZE.x : ENTER_BUTTON_POS_X - (PUNCT_BUTTON_SIZE.x * 3.f) - SPACE_BUTTON_SIZE.x - (SPACE * 4.f), LAST_ROW_KEY_POS);
     const auto is_shift = ime.caps_level != NO;
 
+    const ImVec2 WINDOW_POS(VIEWPORT_POS.x, VIEWPORT_POS.y + VIEWPORT_SIZE.y - (248.f * SCALE.y));
+    const ImVec2 WINDOW_SIZE(VIEWPORT_SIZE.x, 248.f * SCALE.y);
+
     ImGui::PushStyleColor(ImGuiCol_WindowBg, numeric_pad ? IME_NUMERIC_BG : GUI_SMOOTH_GRAY);
-    ImGui::SetNextWindowPos(ImVec2(0.f, display_size.y - (248.f * SCALE.y)), ImGuiCond_Always, ImVec2(0.f, 0.f));
-    ImGui::SetNextWindowSize(ImVec2(display_size.x, 248.f * SCALE.y));
+    ImGui::SetNextWindowPos(WINDOW_POS, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(WINDOW_SIZE);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
     ImGui::Begin("##ime", &ime.state, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f * emuenv.dpi_scale);
+    ImGui::PopStyleVar(2);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f * SCALE.x);
     ImGui::PushStyleColor(ImGuiCol_Button, GUI_COLOR_TEXT);
     ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_BLACK);
     ImGui::SetWindowFontScale(RES_SCALE.x);
     if (numeric_pad) {
         ImGui::SetCursorPosX(MARGE_BORDER);
-        ImGui::VSliderFloat("##scroll_special", ImVec2(42.f * SCALE.x, 140.f * SCALE.y), &scroll_special["current"], scroll_special["max"], 0, "");
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 62.f * SCALE.y);
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 10.f * SCALE.y);
+        ImGui::VSliderFloat("##scroll_special", ImVec2(42.f * SCALE.x, 140.f * SCALE.y), &scroll_special_current, scroll_special_max, 0, "");
+        ImGui::PopStyleVar(2);
         ImGui::SetNextWindowPos(ImVec2(WINDOW_POS.x + (74.f * SCALE.x), WINDOW_POS.y));
-        ImGui::BeginChild("##special_key", ImVec2(488.f * SCALE.x, 178.f * SCALE.y), false, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::BeginChild("##special_key", ImVec2(488.f * SCALE.x, 178.f * SCALE.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
         const auto scroll_value = ImGui::GetIO().MouseWheel * 20.f;
         if (ImGui::GetIO().MouseWheel == 1)
-            scroll_special["current"] -= std::min(scroll_value, scroll_special["current"]);
+            scroll_special_current -= std::min(scroll_value, scroll_special_current);
         else
-            scroll_special["current"] += std::min(-scroll_value, scroll_special["max"] - scroll_special["current"]);
-        ImGui::SetScrollY(scroll_special["current"]);
-        scroll_special["max"] = ImGui::GetScrollMaxY();
+            scroll_special_current += std::min(-scroll_value, scroll_special_max - scroll_special_current);
+        ImGui::SetScrollY(scroll_special_current);
+        scroll_special_max = ImGui::GetScrollMaxY();
         ImGui::PushStyleColor(ImGuiCol_Button, IME_NUMERIC_BG);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT);
         for (const auto &special : special_key) {
@@ -350,7 +361,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
         ImGui::SetCursorPos(ImVec2(MARGE_BORDER, key_row_pos[3] * SCALE.y));
         ImGui::PushStyleColor(ImGuiCol_Button, IME_BUTTON_BG);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT);
-        if (ImGui::Button("Shift", BUTTON_SIZE)) {
+        if (ImGui::Button("Shift", BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_l2))) {
             if (ime.edit_text.caretIndex == 0)
                 ime.caps_level = ime.caps_level == YES ? NO : ++ime.caps_level;
             else
@@ -360,14 +371,14 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
         ImGui::SetCursorPos(ImVec2(SPACE_BUTTON_POS.x - (PUNCT_BUTTON_SIZE.x * 2.f) - (SPACE * 2.f), SPACE_BUTTON_POS.y));
         ImGui::PushStyleColor(ImGuiCol_Button, GUI_COLOR_TEXT);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_BLACK);
-        const auto ponct_1 = is_shift ? punct[FIRST][YES] : punct[FIRST][NO];
+        const auto &ponct_1 = is_shift ? punct[FIRST][YES] : punct[FIRST][NO];
         if (ImGui::Button(string_utils::utf16_to_utf8(ponct_1).c_str(), PUNCT_BUTTON_SIZE))
             update_ponct(ime, ponct_1);
         ImGui::PopStyleColor(2);
         ImGui::SameLine(0, SPACE);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT);
         ImGui::PushStyleColor(ImGuiCol_Button, IME_BUTTON_BG);
-        if (ImGui::Button("<", PUNCT_BUTTON_SIZE)) {
+        if (ImGui::Button("<", PUNCT_BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_l1))) {
             ime.edit_text.editIndex = ime.edit_text.caretIndex;
             if (ime.edit_text.caretIndex)
                 --ime.edit_text.caretIndex;
@@ -381,7 +392,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
                 ime.caps_level = YES;
         }
         ImGui::SameLine(0, SPACE_BUTTON_SIZE.x + (SPACE * 2.f));
-        if (ImGui::Button(">", PUNCT_BUTTON_SIZE)) {
+        if (ImGui::Button(">", PUNCT_BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_r1))) {
             ime.edit_text.editIndex = ime.edit_text.caretIndex;
             if (ime.edit_text.caretIndex < ime.str.length())
                 ++ime.edit_text.caretIndex;
@@ -398,7 +409,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
         ImGui::SameLine(0, SPACE);
         ImGui::PushStyleColor(ImGuiCol_Button, GUI_COLOR_TEXT);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_BLACK);
-        const auto ponct_2 = is_shift ? punct[SECOND][YES] : punct[SECOND][NO];
+        const auto &ponct_2 = is_shift ? punct[SECOND][YES] : punct[SECOND][NO];
         if (ImGui::Button(string_utils::utf16_to_utf8(ponct_2).c_str(), PUNCT_BUTTON_SIZE))
             update_ponct(ime, ponct_2);
         ImGui::PopStyleColor(2);
@@ -411,7 +422,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
                 if (is_first)
                     set_second_keyboard(ime);
                 else
-                    init_ime_lang(ime, SceImeLanguage(emuenv.cfg.current_ime_lang));
+                    init_ime_lang(ime, static_cast<SceImeLanguage>(emuenv.cfg.current_ime_lang));
                 current_keyboard = is_first ? SECOND : FIRST;
             }
             ImGui::PopStyleColor(2);
@@ -421,7 +432,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
     ImGui::SetCursorPos(ImVec2(BUTTON_POS_X, key_row_pos[3] * SCALE.y));
     ImGui::PushStyleColor(ImGuiCol_Button, IME_BUTTON_BG);
     ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT);
-    if (ImGui::Button("Back", BUTTON_SIZE) && ime.edit_text.caretIndex) {
+    if ((ImGui::Button("Backspace", BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_square))) && ime.edit_text.caretIndex) {
         ime.str.erase(ime.edit_text.caretIndex - 1, 1);
         ime.edit_text.editIndex = ime.edit_text.caretIndex;
         --ime.edit_text.caretIndex;
@@ -438,7 +449,7 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
     ImGui::PopStyleColor(2);
     ImGui::PushStyleColor(ImGuiCol_Button, GUI_COLOR_TEXT_BLACK);
     ImGui::SetCursorPos(ImVec2(MARGE_BORDER, LAST_ROW_KEY_POS));
-    if (ImGui::Button("V", ImVec2(44.f * SCALE.x, KEY_BUTTON_SIZE.y)))
+    if (ImGui::Button("V", ImVec2(44.f * SCALE.x, KEY_BUTTON_SIZE.y)) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_circle)))
         ime.event_id = SCE_IME_EVENT_PRESS_CLOSE;
     ImGui::PopStyleColor();
     ImGui::SameLine(0, 18.f);
@@ -450,27 +461,23 @@ void draw_ime(Ime &ime, EmuEnvState &emuenv) {
         if (ImGui::Button("S/K", PUNCT_BUTTON_SIZE))
             ImGui::OpenPopup("S/K");
         if (ImGui::BeginPopup("S/K", ImGuiWindowFlags_NoMove)) {
-            ImGui::TextColored(GUI_COLOR_TEXT_TITLE, "%s", "Change language of keyboard");
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
             for (const auto &lang : emuenv.cfg.ime_langs) {
-                if (ImGui::MenuItem(get_ime_lang_index(ime, SceImeLanguage(lang))->second.c_str(), nullptr, emuenv.cfg.current_ime_lang == lang)) {
-                    init_ime_lang(ime, SceImeLanguage(lang));
+                if (ImGui::MenuItem(get_ime_lang_index(ime, static_cast<SceImeLanguage>(lang))->second.c_str(), nullptr, emuenv.cfg.current_ime_lang == lang)) {
+                    init_ime_lang(ime, static_cast<SceImeLanguage>(lang));
                     emuenv.cfg.current_ime_lang = lang;
-                    config::serialize_config(emuenv.cfg, emuenv.base_path);
+                    config::serialize_config(emuenv.cfg, emuenv.config_path);
                 }
             }
             ImGui::EndPopup();
         }
     }
     ImGui::SetCursorPos(SPACE_BUTTON_POS);
-    if (ImGui::Button(space_str.c_str(), SPACE_BUTTON_SIZE))
+    if (ImGui::Button(space_str.c_str(), SPACE_BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_triangle)))
         update_ponct(ime, u" ");
     ImGui::PopStyleColor();
     ImGui::SetCursorPos(ImVec2(ENTER_BUTTON_POS_X, LAST_ROW_KEY_POS));
     ImGui::PushStyleColor(ImGuiCol_Button, GUI_PROGRESS_BAR);
-    if (ImGui::Button(ime.enter_label.c_str(), ENTER_BUTTON_SIZE))
+    if (ImGui::Button(ime.enter_label.c_str(), ENTER_BUTTON_SIZE) || ImGui::IsKeyPressed(static_cast<ImGuiKey>(emuenv.cfg.keyboard_button_r2)))
         ime.event_id = SCE_IME_EVENT_PRESS_ENTER;
     ImGui::PopStyleColor();
 

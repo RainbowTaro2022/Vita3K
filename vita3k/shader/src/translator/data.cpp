@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -67,7 +67,6 @@ bool USSETranslatorVisitor::vmov(
     inst.opcode = tb_decode_vmov[(Imm3)move_type];
     // TODO: dest mask
     // TODO: flags
-    // TODO: test type
 
     const bool is_double_regs = move_data_type == DataType::C10 || move_data_type == DataType::F16 || move_data_type == DataType::F32;
     const bool is_conditional = (move_type != MoveType::UNCONDITIONAL);
@@ -79,10 +78,14 @@ bool USSETranslatorVisitor::vmov(
     inst.opr.dest = decode_dest(inst.opr.dest, dest_n, dest_bank_sel, dest_bank_ext, is_double_regs, reg_bits, m_second_program);
     inst.opr.src1 = decode_src12(inst.opr.src1, src1_n, src1_bank_sel, src1_bank_ext, is_double_regs, reg_bits, m_second_program);
 
-    dest_mask = decode_write_mask(inst.opr.dest.bank, dest_mask, move_data_type == DataType::F16);
+    if (move_data_type == DataType::F16 || move_data_type == DataType::F32)
+        dest_mask = decode_write_mask(inst.opr.dest.bank, dest_mask, move_data_type == DataType::F16);
+    else if (!is_double_regs)
+        // only floating point moves are vectorized
+        dest_mask = 0b1;
 
     // Velocity uses a vec4 table, non-extended, so i assumes type=vec4, extended=false
-    inst.opr.src1.swizzle = decode_vec34_swizzle(src0_swiz, false, 2);
+    inst.opr.src1.swizzle = is_double_regs ? decode_vec34_swizzle(src0_swiz, false, 2) : (Swizzle4 SWIZZLE_CHANNEL_4_DEFAULT);
 
     inst.opr.src1.type = move_data_type;
     inst.opr.dest.type = move_data_type;
@@ -91,10 +94,15 @@ bool USSETranslatorVisitor::vmov(
     CompareMethod compare_method = CompareMethod::NE_ZERO;
     spv::Op compare_op = spv::OpAny;
 
+    const DataType test_type = is_u8_conditional ? DataType::UINT8 : move_data_type;
+    const bool is_test_signed = is_signed_integer_data_type(test_type);
+    const bool is_test_unsigned = is_unsigned_integer_data_type(test_type);
+    const bool is_test_integer = is_test_signed || is_test_unsigned;
+
     if (is_conditional) {
         compare_method = static_cast<CompareMethod>((test_bit_2 << 1) | test_bit_1);
         inst.opr.src0 = decode_src0(inst.opr.src0, src0_n, src0_bank_sel, end_or_src0_bank_ext, is_double_regs, reg_bits, m_second_program);
-        inst.opr.src0.type = is_u8_conditional ? DataType::UINT8 : move_data_type;
+        inst.opr.src0.type = test_type;
         inst.opr.src2 = decode_src12(inst.opr.src2, src2_n, src2_bank_sel, src2_bank_ext, is_double_regs, reg_bits, m_second_program);
         inst.opr.src2.type = move_data_type;
 
@@ -106,25 +114,29 @@ bool USSETranslatorVisitor::vmov(
 
         switch (compare_method) {
         case CompareMethod::LT_ZERO:
-            if (is_u8_conditional)
+            if (is_test_unsigned)
                 compare_op = spv::Op::OpULessThan;
+            else if (is_test_signed)
+                compare_op = spv::Op::OpSLessThan;
             else
                 compare_op = spv::Op::OpFOrdLessThan;
             break;
         case CompareMethod::LTE_ZERO:
-            if (is_u8_conditional)
+            if (is_test_unsigned)
                 compare_op = spv::Op::OpULessThanEqual;
+            else if (is_test_signed)
+                compare_op = spv::Op::OpSLessThanEqual;
             else
                 compare_op = spv::Op::OpFOrdLessThanEqual;
             break;
         case CompareMethod::NE_ZERO:
-            if (is_u8_conditional)
+            if (is_test_integer)
                 compare_op = spv::Op::OpINotEqual;
             else
                 compare_op = spv::Op::OpFOrdNotEqual;
             break;
         case CompareMethod::EQ_ZERO:
-            if (is_u8_conditional)
+            if (is_test_integer)
                 compare_op = spv::Op::OpIEqual;
             else
                 compare_op = spv::Op::OpFOrdEqual;
@@ -190,7 +202,7 @@ bool USSETranslatorVisitor::vmov(
         source_to_compare_with_0 = load(inst.opr.src0, dest_mask, src0_repeat_offset);
         source_2 = load(inst.opr.src2, dest_mask, src2_repeat_offset);
         spv::Id result_type = m_b.getTypeId(source_2);
-        spv::Id v0_comp_type = is_u8_conditional ? m_b.makeUintType(32) : m_b.makeFloatType(32);
+        spv::Id v0_comp_type = is_test_unsigned ? m_b.makeUintType(32) : (is_test_signed ? m_b.makeIntType(32) : m_b.makeFloatType(32));
         spv::Id v0_type = utils::make_vector_or_scalar_type(m_b, v0_comp_type, m_b.getNumComponents(source_2));
         spv::Id v0 = utils::make_uniform_vector_from_type(m_b, v0_type, 0);
 
@@ -495,17 +507,17 @@ bool USSETranslatorVisitor::vpck(
         src2.swizzle = SWIZZLE_CHANNEL_4_DEFAULT;
         spv::Id source1 = load(src1, 0b11, src1_repeat_offset);
         spv::Id source2 = load(src2, 0b11, src2_repeat_offset);
-        source = utils::finalize(m_b, source1, source2, inst.opr.src1.swizzle, 0, dest_mask);
+        source = utils::finalize(m_b, source1, source2, inst.opr.src1.swizzle, m_b.makeIntConstant(0), dest_mask);
     }
 
     // source is int destination is float
     if (is_float_data_type(inst.opr.dest.type) && !is_float_data_type(inst.opr.src1.type)) {
-        source = utils::convert_to_float(m_b, source, inst.opr.src1.type, scale);
+        source = utils::convert_to_float(m_b, m_util_funcs, source, inst.opr.src1.type, scale);
     }
 
     // source is float destination is int
     if (!is_float_data_type(inst.opr.dest.type) && is_float_data_type(inst.opr.src1.type)) {
-        source = utils::convert_to_int(m_b, source, inst.opr.dest.type, scale);
+        source = utils::convert_to_int(m_b, m_util_funcs, source, inst.opr.dest.type, scale);
     }
 
     store(inst.opr.dest, source, dest_mask, dest_repeat_offset);
@@ -544,12 +556,21 @@ bool USSETranslatorVisitor::vldst(
     Imm7 src1_n,
     Imm7 src2_n) {
     // TODO:
-    // - Store instruction
     // - Post or pre or any increment mode.
 
     Instruction inst;
-    inst.opcode = Opcode::LDR;
-
+    switch (op1) {
+    case 1:
+        inst.opcode = Opcode::LDR;
+        break;
+    case 2:
+        inst.opcode = Opcode::STR;
+        break;
+    default:
+        LOG_ERROR("Unknown load/store operation {}", op1);
+        return true;
+    }
+    const bool is_store = inst.opcode == Opcode::STR;
     DataType type_to_ldst = DataType::UNK;
 
     switch (data_type) {
@@ -572,24 +593,6 @@ bool USSETranslatorVisitor::vldst(
     const int total_number_to_fetch = mask_count + 1;
     const int total_bytes_fo_fetch = get_data_type_size(type_to_ldst) * total_number_to_fetch;
 
-    Operand to_store;
-
-    if (is_translating_secondary_program()) {
-        to_store.bank = RegisterBank::SECATTR;
-    } else {
-        if (dest_bank_primattr) {
-            to_store.bank = RegisterBank::PRIMATTR;
-        } else {
-            to_store.bank = RegisterBank::TEMP;
-        }
-    }
-
-    to_store.num = dest_n;
-    if (m_features.support_memory_mapping)
-        to_store.type = type_to_ldst;
-    else
-        to_store.type = DataType::F32;
-
     inst.opr.src0 = decode_src0(inst.opr.src0, src0_n, src0_bank, src0_bank_ext, false, 7, m_second_program);
     inst.opr.src1 = decode_src12(inst.opr.src1, src1_n, src1_bank, src1_bank_ext, false, 7, m_second_program);
     inst.opr.src2 = decode_src12(inst.opr.src2, src2_n, src2_bank, src2_bank_ext, false, 7, m_second_program);
@@ -598,43 +601,168 @@ bool USSETranslatorVisitor::vldst(
     inst.opr.src1.type = DataType::INT32;
     inst.opr.src2.type = DataType::INT32;
 
-    std::string disasm_str = fmt::format("{:016x}: {}{}", m_instr, disasm::e_predicate_str(pred), disasm::opcode_str(inst.opcode));
-    LOG_DISASM("{} {} ({} + {} + {}) [{} bytes]", disasm_str, disasm::operand_to_str(to_store, 0b1, 0),
-        disasm::operand_to_str(inst.opr.src0, 0b1, 0),
-        disasm::operand_to_str(inst.opr.src1, 0b1, 0), disasm::operand_to_str(inst.opr.src2, 0b1, 0), total_bytes_fo_fetch);
+    Operand to_store;
+    if (is_store) {
+        inst.opr.src2.type = type_to_ldst;
+        to_store = inst.opr.src2;
+    } else {
+        if (is_translating_secondary_program()) {
+            to_store.bank = RegisterBank::SECATTR;
+        } else {
+            if (dest_bank_primattr) {
+                to_store.bank = RegisterBank::PRIMATTR;
+            } else {
+                to_store.bank = RegisterBank::TEMP;
+            }
+        }
 
-    // TODO: is source_2 in word or byte? Is it even used at all?
-    spv::Id source_0 = load(inst.opr.src0, 0b1, 0);
+        to_store.num = dest_n;
+        if (m_features.support_memory_mapping)
+            to_store.type = type_to_ldst;
+        else
+            to_store.type = DataType::F32;
+    }
 
     if (inst.opr.src1.bank == RegisterBank::IMMEDIATE) {
         inst.opr.src1.num *= get_data_type_size(type_to_ldst);
     }
 
-    spv::Id source_1 = load(inst.opr.src1, 0b1, 0);
-    spv::Id source_2 = load(inst.opr.src2, 0b1, 0);
+    // right now proper repeat is implemented only for the store operation
+    const int repeat_count = is_store ? mask_count : 0;
+    set_repeat_multiplier(1, 1, 1, 1);
+    BEGIN_REPEAT(repeat_count)
+    GET_REPEAT(inst, RepeatMode::SLMSI)
+
+    const int current_bytes_to_fetch = is_store ? 4 : total_bytes_fo_fetch;
+    const int current_number_to_fetch = is_store ? 1 : total_number_to_fetch;
+
+    const int to_store_offset = is_store ? src2_repeat_offset : 0;
+    const int src0_offset = is_store ? src0_repeat_offset : 0;
+    const int src1_offset = is_store ? dest_repeat_offset : 0;
+    const int src2_offset = 0; // not used when storing
+
+    std::string disasm_str = fmt::format("{:016x}: {}{}", m_instr, disasm::e_predicate_str(pred), disasm::opcode_str(inst.opcode));
+    LOG_DISASM("{} {} ({} + {} + {}) [{} bytes]", disasm_str, disasm::operand_to_str(to_store, 0b1, to_store_offset),
+        disasm::operand_to_str(inst.opr.src0, 0b1, src0_offset),
+        disasm::operand_to_str(inst.opr.src1, 0b1, src1_offset), is_store ? "0" : disasm::operand_to_str(inst.opr.src2, 0b1, src2_offset), current_bytes_to_fetch);
+
+    // check if we handle this literal or texture read
+    auto check_for_literal_texture_read = [&]() {
+        if (mask_count > 0) {
+            LOG_ERROR("Unimplemented literal buffer access with repeat");
+            return false;
+        }
+        if (to_store.type != DataType::F32) {
+            LOG_ERROR("Unimplemented non-f32 literal buffer access");
+            return false;
+        }
+        if (inst.opr.src1.bank != RegisterBank::IMMEDIATE || inst.opr.src2.bank != RegisterBank::IMMEDIATE) {
+            LOG_ERROR("Unimplemented non-immediate literal buffer access");
+            return false;
+        }
+        if (is_store) {
+            LOG_ERROR("Unhandled literal buffer store");
+            return false;
+        }
+
+        return true;
+    };
+
+    if (inst.opr.src0.bank == RegisterBank::SECATTR && inst.opr.src0.num == m_spirv_params.texture_buffer_sa_offset) {
+        // We are reading the texture buffer
+
+        if (!check_for_literal_texture_read())
+            return true;
+
+        int offset = (m_spirv_params.texture_buffer_base + inst.opr.src1.num + inst.opr.src2.num) / sizeof(uint32_t);
+        // we store the texture index in the first texture register, we don't do anything with the other 3
+        if (offset % 4 != 0)
+            continue;
+
+        to_store.type = DataType::INT32;
+        store(to_store, m_b.makeIntConstant(offset / 4), 0b1);
+        continue;
+    } else if (inst.opr.src0.bank == RegisterBank::SECATTR && inst.opr.src0.num == m_spirv_params.literal_buffer_sa_offset) {
+        // We are reading the literal buffer
+
+        if (!check_for_literal_texture_read())
+            return true;
+
+        int offset = m_spirv_params.literal_buffer_base + inst.opr.src1.num + inst.opr.src2.num;
+        const uint8_t *literal_buffer = m_program.literal_buffer_data();
+        const float literal = *reinterpret_cast<const float *>(literal_buffer + offset);
+
+        store(to_store, m_b.makeFloatConstant(literal), 0b1);
+        continue;
+    }
+
+    spv::Id source_0 = load(inst.opr.src0, 0b1, src0_offset);
+    spv::Id source_1 = load(inst.opr.src1, 0b1, src1_offset);
+
+    // are we using the sa register containing the thread buffer address ?
+    const bool is_thread_buffer_access = inst.opr.src0.bank == RegisterBank::SECATTR && inst.opr.src0.num == m_spirv_params.thread_buffer_sa_offset;
 
     // Seems that if it's indexed by register, offset is in bytes and based on 0x10000?
     // Maybe that's just how the memory map operates. I'm not sure. However the literals on all shader so far is that
     // Another thing is that, when moe expand is not enable, there seems to be 4 bytes added before fetching... No absolute prove.
     // Maybe moe expand means it's not fetching after all? Dunno
-    std::uint32_t REG_INDEX_BASE = 0x10000;
+    // also for the thread buffer, this value is 128 times bigger
+    uint32_t REG_INDEX_BASE = is_thread_buffer_access ? 0x1000000 : 0x10000;
     spv::Id reg_index_base_cst = m_b.makeIntConstant(REG_INDEX_BASE);
+    spv::Id i32_type = m_b.makeIntType(32);
 
     if (inst.opr.src1.bank != shader::usse::RegisterBank::IMMEDIATE) {
         source_1 = m_b.createBinOp(spv::OpISub, m_b.getTypeId(source_1), source_1, reg_index_base_cst);
     }
 
-    spv::Id i32_type = m_b.makeIntType(32);
-    spv::Id base = m_b.createBinOp(spv::OpIAdd, i32_type, source_0, source_1);
-    base = m_b.createBinOp(spv::OpIAdd, i32_type, base, source_2);
-
     if (!moe_expand) {
-        base = m_b.createBinOp(spv::OpIAdd, i32_type, base, m_b.makeIntConstant(4));
+        source_1 = m_b.createBinOp(spv::OpIAdd, i32_type, source_1, m_b.makeIntConstant(4));
     }
 
+    if (!is_store) {
+        spv::Id source_2 = load(inst.opr.src2, 0b1, src2_offset);
+        source_1 = m_b.createBinOp(spv::OpIAdd, i32_type, source_1, source_2);
+    }
+
+    if (is_thread_buffer_access) {
+        // We are reading the thread buffer
+
+        // first some checks
+        if (mask_count > 0) {
+            LOG_ERROR("Unimplemented thread buffer access with repeat");
+            return true;
+        }
+        if (to_store.type != DataType::F32) {
+            LOG_ERROR("Unimplemented non-f32 thread buffer access");
+            return true;
+        }
+
+        if (m_spirv_params.thread_buffer_base != 0)
+            source_1 = m_b.createBinOp(spv::OpIAdd, i32_type, source_1, m_spirv_params.thread_buffer_base);
+
+        // get the index in the float array
+        spv::Id index = m_b.createBinOp(spv::OpShiftRightLogical, i32_type, source_1, m_b.makeUintConstant(2));
+        spv::Id float_ptr = utils::create_access_chain(m_b, spv::StorageClassPrivate, m_spirv_params.thread_buffer, { index });
+        if (is_store) {
+            spv::Id value = load(to_store, 0b1);
+            m_b.createStore(value, float_ptr);
+        } else {
+            spv::Id value = m_b.createLoad(float_ptr, spv::NoPrecision);
+            store(to_store, value, 0b1);
+        }
+        continue;
+    }
+
+    spv::Id base = m_b.createBinOp(spv::OpIAdd, i32_type, source_0, source_1);
+
     if (m_features.support_memory_mapping) {
-        utils::buffer_address_load(m_b, m_spirv_params, m_util_funcs, m_features, to_store, base, get_data_type_size(type_to_ldst), total_number_to_fetch, m_program.is_fragment());
+        utils::buffer_address_access(m_b, m_spirv_params, m_util_funcs, m_features, to_store, to_store_offset, base, get_data_type_size(type_to_ldst), current_number_to_fetch, -1, is_store);
     } else {
+        if (is_store) {
+            LOG_ERROR("Store opcode is not supported without memory mapping");
+            return true;
+        }
+
         for (int i = 0; i < total_bytes_fo_fetch / 4; ++i) {
             spv::Id offset = m_b.createBinOp(spv::OpIAdd, m_b.makeIntType(32), base, m_b.makeIntConstant(4 * i));
             spv::Id src = utils::fetch_memory(m_b, m_spirv_params, m_util_funcs, offset);
@@ -642,6 +770,9 @@ bool USSETranslatorVisitor::vldst(
             to_store.num += 1;
         }
     }
+
+    END_REPEAT()
+    reset_repeat_multiplier();
 
     return true;
 }

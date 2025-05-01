@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceJpegEncArm.h"
+#include <module/module.h>
 
 EXPORT(int, sceJpegArmEncoderEncode) {
     return UNIMPLEMENTED();
@@ -48,12 +48,3 @@ EXPORT(int, sceJpegArmEncoderSetOutputAddr) {
 EXPORT(int, sceJpegArmEncoderSetValidRegion) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceJpegArmEncoderEncode)
-BRIDGE_IMPL(sceJpegArmEncoderEnd)
-BRIDGE_IMPL(sceJpegArmEncoderGetContextSize)
-BRIDGE_IMPL(sceJpegArmEncoderInit)
-BRIDGE_IMPL(sceJpegArmEncoderSetCompressionRatio)
-BRIDGE_IMPL(sceJpegArmEncoderSetHeaderMode)
-BRIDGE_IMPL(sceJpegArmEncoderSetOutputAddr)
-BRIDGE_IMPL(sceJpegArmEncoderSetValidRegion)

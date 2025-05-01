@@ -1,7 +1,7 @@
 #include <memory>
 
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 #include <emuenv/state.h>
+#include <util/bit_cast.h>
 #include <util/log.h>
 
 #include <gdbstub/functions.h>
@@ -27,7 +28,6 @@
 
 #include <kernel/state.h>
 #include <mem/state.h>
-#include <spdlog/fmt/bundled/printf.h>
 #include <sstream>
 
 // Sockets
@@ -79,7 +79,7 @@ struct PacketCommand {
 typedef std::function<std::string(EmuEnvState &state, PacketCommand &command)> PacketFunction;
 
 struct PacketFunctionBundle {
-    std::string name;
+    std::string_view name;
     PacketFunction function;
 };
 
@@ -101,11 +101,7 @@ static std::string to_hex(SceUID value) {
 }
 
 static uint32_t parse_hex(const std::string &hex) {
-    std::stringstream stream;
-    uint32_t value;
-    stream << std::hex << hex;
-    stream >> value;
-    return value;
+    return static_cast<uint32_t>(std::strtoul(hex.c_str(), nullptr, 16));
 }
 
 static uint8_t make_checksum(const char *data, int64_t length) {
@@ -222,7 +218,7 @@ static uint32_t fetch_reg(CPUState &state, uint32_t reg) {
 
     if (reg <= 23) {
         float value = read_float_reg(state, reg - 16);
-        return *reinterpret_cast<uint32_t *>(&value);
+        return std::bit_cast<uint32_t>(value);
     }
 
     if (reg == 24)
@@ -254,7 +250,7 @@ static void modify_reg(CPUState &state, uint32_t reg, uint32_t value) {
     }
 
     if (reg <= 23) {
-        write_float_reg(state, reg - 16, *reinterpret_cast<float *>(&value));
+        write_float_reg(state, reg - 16, std::bit_cast<float>(value));
         return;
     }
 
@@ -271,24 +267,27 @@ static void modify_reg(CPUState &state, uint32_t reg, uint32_t value) {
 }
 
 static std::string cmd_read_registers(EmuEnvState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
-        || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
+        || !state.kernel.threads.contains(state.gdb.current_thread))
         return "E00";
 
     CPUState &cpu = *state.kernel.threads[state.gdb.current_thread]->cpu.get();
 
-    std::stringstream stream;
-    for (uint32_t a = 0; a <= 15; a++) {
-        stream << be_hex(fetch_reg(cpu, a));
+    std::string str;
+    str.reserve(16 * 8);
+
+    for (uint32_t a = 0; a < 16; a++) {
+        str += be_hex(fetch_reg(cpu, a));
     }
 
-    return stream.str();
+    return str;
 }
 
 static std::string cmd_write_registers(EmuEnvState &state, PacketCommand &command) {
     const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
-        || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
+        || !state.kernel.threads.contains(state.gdb.current_thread))
         return "E00";
 
     CPUState &cpu = *state.kernel.threads[state.gdb.current_thread]->cpu.get();
@@ -306,28 +305,28 @@ static std::string cmd_write_registers(EmuEnvState &state, PacketCommand &comman
 static std::string cmd_read_register(EmuEnvState &state, PacketCommand &command) {
     const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
-        || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
+        || !state.kernel.threads.contains(state.gdb.current_thread))
         return "E00";
 
     CPUState &cpu = *state.kernel.threads[state.gdb.current_thread]->cpu.get();
 
     const std::string content = content_string(command);
-    int32_t reg = parse_hex(content.substr(1, content.size() - 1));
+    uint32_t reg = parse_hex(content.substr(1, content.size() - 1));
 
-    return be_hex(fetch_reg(cpu, static_cast<uint32_t>(reg)));
+    return be_hex(fetch_reg(cpu, reg));
 }
 
 static std::string cmd_write_register(EmuEnvState &state, PacketCommand &command) {
     const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
-        || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
+        || !state.kernel.threads.contains(state.gdb.current_thread))
         return "E00";
 
     CPUState &cpu = *state.kernel.threads[state.gdb.current_thread]->cpu.get();
 
     const std::string content = content_string(command);
-    uint32_t equal_index = content.find('=');
-    int32_t reg = parse_hex(content.substr(1, equal_index - 1));
+    size_t equal_index = content.find('=');
+    uint32_t reg = parse_hex(content.substr(1, equal_index - 1));
     uint32_t value = parse_hex(content.substr(equal_index + 1));
     modify_reg(cpu, reg, value);
 
@@ -362,13 +361,14 @@ static std::string cmd_read_memory(EmuEnvState &state, PacketCommand &command) {
     if (!check_memory_region(address, length, state.mem))
         return "EAA";
 
-    std::stringstream stream;
+    std::string str;
+    str.reserve(length * 2);
 
     for (uint32_t a = 0; a < length; a++) {
-        stream << fmt::format("{:0>2x}", static_cast<uint8_t>(state.mem.memory[address + a]));
+        fmt::format_to(std::back_inserter(str), "{:02x}", *Ptr<uint8_t>(address + a).get(state.mem));
     }
 
-    return stream.str();
+    return str;
 }
 
 static std::string cmd_write_memory(EmuEnvState &state, PacketCommand &command) {
@@ -386,7 +386,7 @@ static std::string cmd_write_memory(EmuEnvState &state, PacketCommand &command) 
         return "EAA";
 
     for (uint32_t a = 0; a < length; a++) {
-        state.mem.memory[address + a] = static_cast<uint8_t>(parse_hex(hex_data.substr(a * 2, 2)));
+        *Ptr<uint8_t>(address + a).get(state.mem) = static_cast<uint8_t>(parse_hex(hex_data.substr(a * 2, 2)));
     }
 
     return "OK";
@@ -409,7 +409,7 @@ static std::string cmd_write_binary(EmuEnvState &state, PacketCommand &command) 
         return "EAA";
 
     for (uint32_t a = 0; a < length; a++) {
-        state.mem.memory[address + a] = data[a];
+        *Ptr<uint8_t>(address + a).get(state.mem) = data[a];
     }
 
     return "OK";
@@ -419,15 +419,13 @@ static std::string cmd_detach(EmuEnvState &state, PacketCommand &command) { retu
 
 static std::string cmd_continue(EmuEnvState &state, PacketCommand &command) {
     const std::string content = content_string(command);
-    const auto watch_delay = std::chrono::milliseconds(100);
+    constexpr auto watch_delay = std::chrono::milliseconds(100);
 
     uint64_t index = 5;
     uint64_t next = 0;
     do {
         next = content.find(';', index + 1);
         std::string text = content.substr(index + 1, next - index - 1);
-
-        const uint64_t colon = text.find(':');
 
         const char cmd = text[0];
         switch (cmd) {
@@ -437,7 +435,7 @@ static std::string cmd_continue(EmuEnvState &state, PacketCommand &command) {
         case 'S': {
             bool step = cmd == 's' || cmd == 'S';
 
-            // inferior_thread is the thread that trigerred breakpoint before
+            // inferior_thread is the thread that triggered breakpoint before
             // step or run that thread
 
             if (state.gdb.inferior_thread != 0) {
@@ -467,7 +465,7 @@ static std::string cmd_continue(EmuEnvState &state, PacketCommand &command) {
                         }
                     }
                 }
-                // wait until some thread triger breakpoint
+                // wait until some threads trigger breakpoint
                 bool did_break = false;
                 while (!did_break) {
                     auto lock = std::unique_lock(state.kernel.mutex);
@@ -530,7 +528,7 @@ static std::string cmd_thread_alive(EmuEnvState &state, PacketCommand &command) 
     const int32_t thread_id = parse_hex(content.substr(1));
 
     // Assuming a thread is removed from the map when it closes or is killed.
-    if (state.kernel.threads.find(thread_id) != state.kernel.threads.end())
+    if (state.kernel.threads.contains(thread_id))
         return "OK";
 
     return "E00";
@@ -553,32 +551,27 @@ static std::string cmd_reason(EmuEnvState &state, PacketCommand &command) { retu
 
 static std::string cmd_get_first_thread(EmuEnvState &state, PacketCommand &command) {
     const auto guard = std::lock_guard(state.kernel.mutex);
-    std::stringstream stream;
-
-    stream << "m";
-    stream << to_hex(state.kernel.threads.begin()->first);
-
     state.gdb.thread_info_index = 0;
 
-    return stream.str();
+    return 'm' + to_hex(state.kernel.threads.begin()->first);
 }
 
 static std::string cmd_get_next_thread(EmuEnvState &state, PacketCommand &command) {
     const auto guard = std::lock_guard(state.kernel.mutex);
-    std::stringstream stream;
+    std::string str;
 
     ++state.gdb.thread_info_index;
     if (state.gdb.thread_info_index == state.kernel.threads.size()) {
-        stream << "l";
+        str += 'l';
     } else {
         auto iter = state.kernel.threads.begin();
         std::advance(iter, state.gdb.thread_info_index);
 
-        stream << "m";
-        stream << to_hex(iter->first);
+        str += 'm';
+        str += to_hex(iter->first);
     }
 
-    return stream.str();
+    return str;
 }
 
 static std::string cmd_add_breakpoint(EmuEnvState &state, PacketCommand &command) {
@@ -684,23 +677,12 @@ const static PacketFunctionBundle functions[] = {
     { "S", cmd_deprecated },
 };
 
-template <class T, class U>
-constexpr bool cmp_less(T t, U u) noexcept {
-    using UT = std::make_unsigned_t<T>;
-    using UU = std::make_unsigned_t<U>;
-    if constexpr (std::is_signed_v<T> == std::is_signed_v<U>)
-        return t < u;
-    else if constexpr (std::is_signed_v<T>)
-        return t < 0 ? true : UT(t) < u;
-    else
-        return u < 0 ? false : t < UU(u);
-}
-
-static bool command_begins_with(PacketCommand &command, const std::string &small_str) {
-    if (!cmp_less(small_str.size(), command.content_length))
+static bool command_begins_with(PacketCommand &command, const std::string_view small_str) {
+    // If the command's content is shorter than small_str, it can't match
+    if (static_cast<size_t>(command.content_length) < small_str.size())
         return false;
 
-    return std::memcmp(command.content_start, small_str.c_str(), small_str.size()) == 0;
+    return std::memcmp(command.content_start, small_str.data(), small_str.size()) == 0;
 }
 
 static int64_t server_next(EmuEnvState &state) {
@@ -738,8 +720,10 @@ static int64_t server_next(EmuEnvState &state) {
 
             PacketCommand command = parse_command(buffer + a, length - a);
             if (command.is_valid) {
+                bool found_command = false;
                 for (const auto &function : functions) {
                     if (command_begins_with(command, function.name)) {
+                        found_command = true;
                         LOG_GDB("GDB Server Recognized Command as {}. {}", function.name,
                             std::string(command.content_start, command.content_length));
                         state.gdb.last_reply = function.function(state, command);
@@ -749,8 +733,11 @@ static int64_t server_next(EmuEnvState &state) {
                         break;
                     }
                 }
-                LOG_GDB("GDB Server Unrecognized Command. {}", std::string(command.content_start, command.content_length));
-
+                if (!found_command) {
+                    LOG_GDB("GDB Server Unrecognized Command. {}", std::string(command.content_start, command.content_length));
+                    state.gdb.last_reply = "";
+                    server_reply(state.gdb, state.gdb.last_reply.c_str());
+                }
                 a += command.content_length + 3;
 
             } else {
@@ -805,7 +792,7 @@ void server_open(EmuEnvState &state) {
         return;
     }
 
-    sockaddr_in socket_address = { 0 };
+    sockaddr_in socket_address{};
     socket_address.sin_family = AF_INET;
     socket_address.sin_port = htons(GDB_SERVER_PORT);
 #ifdef _WIN32

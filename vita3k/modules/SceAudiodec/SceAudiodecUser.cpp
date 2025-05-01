@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -113,15 +113,14 @@ constexpr uint32_t SCE_AUDIODEC_AAC_MAX_PCM_SIZE = KiB(2);
 constexpr uint32_t SCE_AUDIODEC_MP3_V1_MAX_PCM_SIZE = 2304;
 constexpr uint32_t SCE_AUDIODEC_MP3_V2_MAX_PCM_SIZE = 1152;
 
-LIBRARY_INIT_IMPL(SceAudiodec) {
+LIBRARY_INIT(SceAudiodec) {
     emuenv.kernel.obj_store.create<AudiodecState>();
 }
-LIBRARY_INIT_REGISTER(SceAudiodec)
 
 EXPORT(int, sceAudiodecClearContext, SceAudiodecCtrl *ctrl) {
     TRACY_FUNC(sceAudiodecClearContext, ctrl)
     const auto state = emuenv.kernel.obj_store.get<AudiodecState>();
-    if (!state->codecs.size()) {
+    if (state->codecs.empty()) {
         return SCE_AUDIODEC_ERROR_NOT_INITIALIZED;
     }
     if (!ctrl->handle) {
@@ -153,14 +152,14 @@ static int create_decoder(EmuEnvState &emuenv, SceAudiodecCtrl *ctrl, SceAudiode
         DecoderPtr decoder = std::make_shared<Atrac9DecoderState>(info.config_data);
         state->decoders[handle] = decoder;
 
-        ctrl->es_size_max = SCE_AUDIODEC_AT9_MAX_ES_SIZE;
-        ctrl->pcm_size_max = decoder->get(DecoderQuery::AT9_SAMPLE_PER_FRAME)
-            * decoder->get(DecoderQuery::CHANNELS) * sizeof(int16_t);
         info.channels = decoder->get(DecoderQuery::CHANNELS);
         info.bit_rate = decoder->get(DecoderQuery::BIT_RATE);
         info.sample_rate = decoder->get(DecoderQuery::SAMPLE_RATE);
         info.super_frame_size = decoder->get(DecoderQuery::AT9_SUPERFRAME_SIZE);
         info.frames_in_super_frame = decoder->get(DecoderQuery::AT9_FRAMES_IN_SUPERFRAME);
+        ctrl->es_size_max = std::min(info.super_frame_size, SCE_AUDIODEC_AT9_MAX_ES_SIZE);
+        ctrl->pcm_size_max = decoder->get(DecoderQuery::AT9_SAMPLE_PER_FRAME)
+            * decoder->get(DecoderQuery::CHANNELS) * sizeof(int16_t);
         return 0;
     }
     case SCE_AUDIODEC_TYPE_AAC: {
@@ -319,7 +318,7 @@ EXPORT(int, sceAudiodecPartlyDecode, SceAudiodecCtrl *ctrl, SceUInt32 samples_of
     TRACY_FUNC(sceAudiodecPartlyDecode, ctrl, samples_offset, samples_to_decode);
     // this function is only called by libatrac
     const auto state = emuenv.kernel.obj_store.get<AudiodecState>();
-    if (state->codecs[SCE_AUDIODEC_TYPE_AT9].count(ctrl->handle) == 0) {
+    if (!state->codecs[SCE_AUDIODEC_TYPE_AT9].contains(ctrl->handle)) {
         STUBBED("Call to sceAudiodecPartlyDecode with a codec other than Atrac9, report it to the devs");
     }
 
@@ -370,19 +369,3 @@ EXPORT(SceInt32, sceAudiodecTermLibrary, SceAudiodecCodec codecType) {
     state->codecs.erase(codecType);
     return 0;
 }
-
-BRIDGE_IMPL(sceAudiodecClearContext)
-BRIDGE_IMPL(sceAudiodecCreateDecoder)
-BRIDGE_IMPL(sceAudiodecCreateDecoderExternal)
-BRIDGE_IMPL(sceAudiodecCreateDecoderResident)
-BRIDGE_IMPL(sceAudiodecDecode)
-BRIDGE_IMPL(sceAudiodecDecodeNFrames)
-BRIDGE_IMPL(sceAudiodecDecodeNStreams)
-BRIDGE_IMPL(sceAudiodecDeleteDecoder)
-BRIDGE_IMPL(sceAudiodecDeleteDecoderExternal)
-BRIDGE_IMPL(sceAudiodecDeleteDecoderResident)
-BRIDGE_IMPL(sceAudiodecGetContextSize)
-BRIDGE_IMPL(sceAudiodecGetInternalError)
-BRIDGE_IMPL(sceAudiodecInitLibrary)
-BRIDGE_IMPL(sceAudiodecPartlyDecode)
-BRIDGE_IMPL(sceAudiodecTermLibrary)

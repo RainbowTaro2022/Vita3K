@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,8 +19,6 @@
 #include "renderer/vulkan/screen_renderer.h"
 
 #include "renderer/vulkan/state.h"
-
-#include <util/align.h>
 
 namespace renderer::vulkan {
 
@@ -98,7 +96,6 @@ void SinglePassScreenFilter::create_layout_sync() {
     pipeline_layout = device.createPipelineLayout(layout_info);
 
     // create vao
-    vao.allocator = screen.state.allocator;
     vao.size = sizeof(screen_vertices_t) * screen.swapchain_size;
     vao.init_buffer(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
 
@@ -109,9 +106,13 @@ void SinglePassScreenFilter::create_layout_sync() {
 
 void SinglePassScreenFilter::create_graphics_pipeline() {
     // create shader modules
-    const auto builtin_shaders_path = std::string(screen.state.base_path) + "shaders-builtin/vulkan/";
-    vertex_shader = vkutil::load_shader(screen.state.device, builtin_shaders_path + std::string(get_vertex_name()));
-    fragment_shader = vkutil::load_shader(screen.state.device, builtin_shaders_path + std::string(get_fragment_name()));
+
+    fs::path builtin_shaders_path = screen.state.static_assets / "shaders-builtin/vulkan";
+    const auto vertex_shader_path = builtin_shaders_path / get_vertex_name();
+    const auto fragment_shader_path = builtin_shaders_path / get_fragment_name();
+
+    vertex_shader = vkutil::load_shader(screen.state.device, vertex_shader_path);
+    fragment_shader = vkutil::load_shader(screen.state.device, fragment_shader_path);
     vk::PipelineShaderStageCreateInfo vert_info{
         .stage = vk::ShaderStageFlagBits::eVertex,
         .module = vertex_shader,
@@ -267,32 +268,39 @@ void SinglePassScreenFilter::render(bool is_pre_renderpass, vk::ImageView src_im
         screen.state.device.updateDescriptorSets(write_descr, {});
 
         // set viewport and scissor
-        vk::Rect2D scissor{
+        vk::Rect2D vk_scissor{
             .offset = { 0, 0 },
             .extent = screen.extent
         };
-        screen.current_cmd_buffer.setScissor(0, scissor);
-        vk::Viewport viewport{
+        screen.current_cmd_buffer.setScissor(0, vk_scissor);
+        vk::Viewport vk_viewport{
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
         // compute viewport now
         const float window_aspect = static_cast<float>(screen.extent.width) / screen.extent.height;
-        const float vita_aspect = static_cast<float>(DEFAULT_RES_WIDTH) / DEFAULT_RES_HEIGHT;
-        if (window_aspect > vita_aspect) {
+        constexpr float vita_aspect = static_cast<float>(DEFAULT_RES_WIDTH) / DEFAULT_RES_HEIGHT;
+        const bool fullscreen_hd_res_pixel_perfect_en = screen.state.fullscreen_hd_res_pixel_perfect & screen.state.fullscreen & !(screen.extent.width % DEFAULT_RES_WIDTH) & !(screen.extent.height % (DEFAULT_RES_HEIGHT - 4));
+        if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
+            // Match the aspect ratio to the screen size.
+            vk_viewport.width = static_cast<float>(screen.extent.width);
+            vk_viewport.height = static_cast<float>(screen.extent.height);
+            vk_viewport.x = 0.0f;
+            vk_viewport.y = 0.0f;
+        } else if ((window_aspect > vita_aspect) && !fullscreen_hd_res_pixel_perfect_en) {
             // Window is wide. Pin top and bottom.
-            viewport.width = screen.extent.height * vita_aspect;
-            viewport.height = static_cast<float>(screen.extent.height);
-            viewport.x = (screen.extent.width - viewport.width) / 2.0f;
-            viewport.y = 0.0f;
+            vk_viewport.width = screen.extent.height * vita_aspect;
+            vk_viewport.height = static_cast<float>(screen.extent.height);
+            vk_viewport.x = (screen.extent.width - vk_viewport.width) / 2.0f;
+            vk_viewport.y = 0.0f;
         } else {
             // Window is tall. Pin left and right.
-            viewport.width = static_cast<float>(screen.extent.width);
-            viewport.height = screen.extent.width / vita_aspect;
-            viewport.x = 0.0f;
-            viewport.y = (screen.extent.height - viewport.height) / 2;
+            vk_viewport.width = static_cast<float>(screen.extent.width);
+            vk_viewport.height = screen.extent.width / vita_aspect;
+            vk_viewport.x = 0.0f;
+            vk_viewport.y = (screen.extent.height - vk_viewport.height) / 2;
         }
-        screen.current_cmd_buffer.setViewport(0, viewport);
+        screen.current_cmd_buffer.setViewport(0, vk_viewport);
     }
 
     {
@@ -402,9 +410,13 @@ void FSRScreenFilter::init() {
     };
     sampler = device.createSampler(sampler_info);
 
-    const auto builtin_shaders_path = std::string(screen.state.base_path) + "shaders-builtin/vulkan/";
-    easu_shader = vkutil::load_shader(screen.state.device, builtin_shaders_path + "fsr_filter_easu.comp.spv");
-    rcas_shader = vkutil::load_shader(screen.state.device, builtin_shaders_path + "fsr_filter_rcas.comp.spv");
+    fs::path builtin_shaders_path = screen.state.static_assets / "shaders-builtin/vulkan";
+
+    const auto easu_shader_path = builtin_shaders_path / "fsr_filter_easu.comp.spv";
+    const auto frcas_shader_path = builtin_shaders_path / "fsr_filter_rcas.comp.spv";
+
+    easu_shader = vkutil::load_shader(screen.state.device, easu_shader_path);
+    rcas_shader = vkutil::load_shader(screen.state.device, frcas_shader_path);
 
     std::array<vk::DescriptorSetLayoutBinding, 3> layout_bindings = {
         // src img
@@ -491,10 +503,9 @@ void FSRScreenFilter::init() {
 
     // create intermediate images
     intermediate_images.resize(screen.swapchain_size);
-    for (auto &img : intermediate_images) {
-        img.allocator = screen.state.allocator;
+    for (auto &img : intermediate_images)
         img.format = vk::Format::eR8G8B8A8Unorm;
-    }
+
     on_resize();
 }
 
@@ -502,7 +513,14 @@ void FSRScreenFilter::on_resize() {
     // compute the extent
     const float window_aspect = static_cast<float>(screen.extent.width) / screen.extent.height;
     const float vita_aspect = static_cast<float>(DEFAULT_RES_WIDTH) / DEFAULT_RES_HEIGHT;
-    if (window_aspect > vita_aspect) {
+    const bool fullscreen_hd_res_pixel_perfect_en = screen.state.fullscreen_hd_res_pixel_perfect & screen.state.fullscreen & !(screen.extent.width % DEFAULT_RES_WIDTH) & !(screen.extent.height % (DEFAULT_RES_HEIGHT - 4));
+    if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
+        // Match the aspect ratio to the screen size.
+        output_size.width = static_cast<float>(screen.extent.width);
+        output_size.height = static_cast<float>(screen.extent.height);
+        output_offset.width = 0.0f;
+        output_offset.height = 0.0f;
+    } else if ((window_aspect > vita_aspect) && !fullscreen_hd_res_pixel_perfect_en) {
         // Window is wide. Pin top and bottom.
         output_size.width = static_cast<uint32_t>(std::round(screen.extent.height * vita_aspect));
         output_size.height = screen.extent.height;
@@ -527,12 +545,12 @@ void FSRScreenFilter::on_resize() {
     // update the descriptor sets (except the first sampler image as it is not fixed)
     std::vector<vk::DescriptorImageInfo> descr_images(screen.swapchain_size * 3);
     std::vector<vk::WriteDescriptorSet> write_descr(screen.swapchain_size * 3);
-    for (int i = 0; i < write_descr.size(); i++) {
+    for (size_t i = 0; i < write_descr.size(); i++) {
         descr_images[i].imageView = intermediate_images[i / 3].view;
         write_descr[i].setImageInfo(descr_images[i]);
     }
 
-    for (int i = 0; i < screen.swapchain_size; i++) {
+    for (uint32_t i = 0; i < screen.swapchain_size; i++) {
         // easu dst
         descr_images[i * 3].imageLayout = vk::ImageLayout::eGeneral;
         write_descr[i * 3]

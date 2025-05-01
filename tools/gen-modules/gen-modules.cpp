@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#ifdef WIN32
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #else
@@ -98,7 +98,7 @@ static Modules parse_db(const Node &db) {
 
 static void gen_license_comment(std::ostream &dst) {
     dst << "// Vita3K emulator project" << '\n';
-    dst << "// Copyright (C) 2023 Vita3K team" << '\n';
+    dst << "// Copyright (C) 2025 Vita3K team" << '\n';
     dst << "//" << '\n';
     dst << "// This program is free software; you can redistribute it and/or modify" << '\n';
     dst << "// it under the terms of the GNU General Public License as published by" << '\n';
@@ -132,7 +132,7 @@ static void gen_nids_h(std::ostream &out, const Modules &modules) {
 
 static void gen_library_cpp(std::ostream &dst, const Library &library) {
     gen_license_comment(dst);
-    dst << "#include \"" << library.first << ".h\"" << '\n';
+    dst << "#include <module/module.h>" << '\n';
 
     for (const Function &function : library.second) {
         dst << '\n';
@@ -142,28 +142,13 @@ static void gen_library_cpp(std::ostream &dst, const Library &library) {
     }
 
     dst << '\n';
-    for (const Function &function : library.second) {
-        dst << "BRIDGE_IMPL(" << function.first << ")" << '\n';
-    }
-}
-
-static void gen_library_h(std::ostream &dst, const Library &library) {
-    gen_license_comment(dst);
-    dst << "#pragma once" << '\n';
-    dst << '\n';
-    dst << "#include <module/module.h>" << '\n';
-    dst << '\n';
-
-    for (const auto &function : library.second) {
-        dst << "BRIDGE_DECL(" << function.first << ")" << '\n';
-    }
 }
 
 static void gen_module_stubs(const Modules &modules) {
     for (const Module &module : modules) {
         const std::string module_path = "vita3k/modules/" + module.first;
 
-#ifdef WIN32
+#ifdef _WIN32
         CreateDirectoryA(module_path.c_str(), nullptr);
 #else
         const int mode = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
@@ -172,11 +157,8 @@ static void gen_module_stubs(const Modules &modules) {
 
         for (const Library &library : module.second) {
             const std::string library_cpp_path = module_path + "/" + library.first + ".cpp";
-            const std::string library_h_path = module_path + "/" + library.first + ".h";
             std::ofstream library_cpp(library_cpp_path.c_str(), std::ios::binary);
             gen_library_cpp(library_cpp, library);
-            std::ofstream library_h(library_h_path.c_str(), std::ios::binary);
-            gen_library_h(library_h, library);
         }
     }
 }
@@ -185,7 +167,6 @@ static void gen_modules_cmakelists(std::ostream &out, const Modules &modules) {
     for (const Module &module : modules) {
         for (const Library &library : module.second) {
             out << "\n\t" << module.first << "/" << library.first << ".cpp";
-            out << " " << module.first << "/" << library.first << ".h";
         }
     }
 }
@@ -204,7 +185,7 @@ int main(int argc, const char *argv[]) {
 
     std::ofstream cmake("vita3k/modules/CMakeLists.txt", std::ios::binary);
     cmake << "set(SOURCE_LIST" << '\n';
-    cmake << '\t' << "module_parent.cpp include/modules/module_parent.h include/modules/library_init_list.inc" << '\n';
+    cmake << '\t' << "module_parent.cpp" << '\n';
 
     std::ofstream nids("vita3k/nids/include/nids/nids.inc", std::ios::binary);
     gen_license_comment(nids);
@@ -226,7 +207,7 @@ int main(int argc, const char *argv[]) {
           << '\n';
     cmake << "add_library(modules STATIC ${SOURCE_LIST})" << '\n';
     cmake << "target_include_directories(modules PUBLIC include)" << '\n';
-    cmake << "target_link_libraries(modules PRIVATE xxHash::xxhash)" << '\n';
+    cmake << "target_link_libraries(modules PRIVATE audio codec ctrl dialog display gui gxm kernel mem motion net ngs np ssl packages renderer rtc sdl2 touch xxHash::xxhash)" << '\n';
     cmake << "target_link_libraries(modules PUBLIC module)" << '\n';
     cmake << "source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})" << '\n';
 

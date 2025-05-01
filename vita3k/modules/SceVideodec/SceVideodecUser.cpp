@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceVideodecUser.h"
+#include <module/module.h>
 
 #include <codec/state.h>
 #include <kernel/state.h>
@@ -200,9 +200,16 @@ EXPORT(int, sceAvcdecDecode, SceAvcdecCtrl *decoder, const SceAvcdecAu *au, SceA
     SceAvcdecPicture *pPicture = picture->pPicture.get(emuenv.mem)[0].get(emuenv.mem);
     uint8_t *output = pPicture->frame.pPicture[0].cast<uint8_t>().get(emuenv.mem);
 
-    // TODO: decoding can be done async I think
+    if ((pPicture->frame.pixelType & (SCE_AVCDEC_PIXEL_YUV420_RASTER | SCE_AVCDEC_PIXEL_YUV420_PACKED_RASTER)) == 0) {
+        LOG_ERROR_ONCE("Avcdec rgba output is not implemented");
+        picture->numOfOutput++;
+        return 0;
+    }
+    bool is_yuvp3 = static_cast<bool>(pPicture->frame.pixelType & SCE_AVCDEC_PIXEL_YUV420_RASTER);
+    decoder_info->set_output_format(is_yuvp3);
+
     decoder_info->configure(&options);
-    const auto send = decoder_info->send(reinterpret_cast<uint8_t *>(au->es.pBuf.get(emuenv.mem)), au->es.size);
+    const auto send = decoder_info->send(au->es.pBuf.cast<uint8_t>().get(emuenv.mem), au->es.size);
     decoder_info->set_res(pPicture->frame.frameWidth, pPicture->frame.frameHeight);
     if (send && decoder_info->receive(output)) {
         decoder_info->get_res(pPicture->frame.horizontalSize, pPicture->frame.verticalSize);
@@ -303,7 +310,6 @@ EXPORT(int, sceAvcdecDecodeStop, SceAvcdecCtrl *decoder, SceAvcdecArrayPicture *
 
     if (!decoder_info->is_stopped) {
         SceAvcdecPicture *pPicture = picture->pPicture.get(emuenv.mem)[0].get(emuenv.mem);
-        uint8_t *output = pPicture->frame.pPicture[0].cast<uint8_t>().get(emuenv.mem);
 
         // we get the values from the last frame, maybe we should slightly increase the pts value?
         decoder_info->get_res(pPicture->frame.horizontalSize, pPicture->frame.verticalSize);
@@ -552,68 +558,3 @@ EXPORT(int, sceVideodecTermLibrary) {
     emuenv.kernel.obj_store.erase<VideodecState>();
     return 0;
 }
-
-BRIDGE_IMPL(sceAvcdecCreateDecoder)
-BRIDGE_IMPL(sceAvcdecCreateDecoderInternal)
-BRIDGE_IMPL(sceAvcdecCreateDecoderNongameapp)
-BRIDGE_IMPL(sceAvcdecCsc)
-BRIDGE_IMPL(sceAvcdecCscInternal)
-BRIDGE_IMPL(sceAvcdecDecode)
-BRIDGE_IMPL(sceAvcdecDecodeAuInternal)
-BRIDGE_IMPL(sceAvcdecDecodeAuNalAuInternal)
-BRIDGE_IMPL(sceAvcdecDecodeAuNalAuNongameapp)
-BRIDGE_IMPL(sceAvcdecDecodeAuNongameapp)
-BRIDGE_IMPL(sceAvcdecDecodeAvailableSize)
-BRIDGE_IMPL(sceAvcdecDecodeFlush)
-BRIDGE_IMPL(sceAvcdecDecodeGetPictureInternal)
-BRIDGE_IMPL(sceAvcdecDecodeGetPictureNongameapp)
-BRIDGE_IMPL(sceAvcdecDecodeGetPictureWithWorkPictureInternal)
-BRIDGE_IMPL(sceAvcdecDecodeNalAu)
-BRIDGE_IMPL(sceAvcdecDecodeNalAuWithWorkPicture)
-BRIDGE_IMPL(sceAvcdecDecodeSetTrickModeNongameapp)
-BRIDGE_IMPL(sceAvcdecDecodeSetUserDataSei1FieldMemSizeNongameapp)
-BRIDGE_IMPL(sceAvcdecDecodeStop)
-BRIDGE_IMPL(sceAvcdecDecodeStopWithWorkPicture)
-BRIDGE_IMPL(sceAvcdecDecodeWithWorkPicture)
-BRIDGE_IMPL(sceAvcdecDeleteDecoder)
-BRIDGE_IMPL(sceAvcdecGetSeiPictureTimingInternal)
-BRIDGE_IMPL(sceAvcdecGetSeiUserDataNongameapp)
-BRIDGE_IMPL(sceAvcdecQueryDecoderMemSize)
-BRIDGE_IMPL(sceAvcdecQueryDecoderMemSizeInternal)
-BRIDGE_IMPL(sceAvcdecQueryDecoderMemSizeNongameapp)
-BRIDGE_IMPL(sceAvcdecRegisterCallbackInternal)
-BRIDGE_IMPL(sceAvcdecRegisterCallbackNongameapp)
-BRIDGE_IMPL(sceAvcdecSetDecodeMode)
-BRIDGE_IMPL(sceAvcdecSetDecodeModeInternal)
-BRIDGE_IMPL(sceAvcdecSetInterlacedStreamMode)
-BRIDGE_IMPL(sceAvcdecSetLowDelayModeNongameapp)
-BRIDGE_IMPL(sceAvcdecSetRecoveryPointSEIMode)
-BRIDGE_IMPL(sceAvcdecUnregisterCallbackInternal)
-BRIDGE_IMPL(sceAvcdecUnregisterCallbackNongameapp)
-BRIDGE_IMPL(sceAvcdecUnregisterCallbackWithCbidInternal)
-BRIDGE_IMPL(sceAvcdecUnregisterCallbackWithCbidNongameapp)
-BRIDGE_IMPL(sceM4vdecCreateDecoder)
-BRIDGE_IMPL(sceM4vdecCreateDecoderInternal)
-BRIDGE_IMPL(sceM4vdecCsc)
-BRIDGE_IMPL(sceM4vdecDecode)
-BRIDGE_IMPL(sceM4vdecDecodeAvailableSize)
-BRIDGE_IMPL(sceM4vdecDecodeFlush)
-BRIDGE_IMPL(sceM4vdecDecodeStop)
-BRIDGE_IMPL(sceM4vdecDecodeStopWithWorkPicture)
-BRIDGE_IMPL(sceM4vdecDecodeWithWorkPicture)
-BRIDGE_IMPL(sceM4vdecDeleteDecoder)
-BRIDGE_IMPL(sceM4vdecQueryDecoderMemSize)
-BRIDGE_IMPL(sceM4vdecQueryDecoderMemSizeInternal)
-BRIDGE_IMPL(sceVideodecInitLibrary)
-BRIDGE_IMPL(sceVideodecInitLibraryInternal)
-BRIDGE_IMPL(sceVideodecInitLibraryNongameapp)
-BRIDGE_IMPL(sceVideodecInitLibraryWithUnmapMem)
-BRIDGE_IMPL(sceVideodecInitLibraryWithUnmapMemInternal)
-BRIDGE_IMPL(sceVideodecInitLibraryWithUnmapMemNongameapp)
-BRIDGE_IMPL(sceVideodecQueryInstanceNongameapp)
-BRIDGE_IMPL(sceVideodecQueryMemSize)
-BRIDGE_IMPL(sceVideodecQueryMemSizeInternal)
-BRIDGE_IMPL(sceVideodecQueryMemSizeNongameapp)
-BRIDGE_IMPL(sceVideodecSetConfig)
-BRIDGE_IMPL(sceVideodecSetConfigInternal)
-BRIDGE_IMPL(sceVideodecTermLibrary)

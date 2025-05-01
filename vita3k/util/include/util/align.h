@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <type_traits>
 
@@ -30,4 +31,7 @@ constexpr T align_down(const T &value, std::uint64_t align) {
     return static_cast<T>(value & ~(align - 1));
 }
 
-std::uint32_t next_power_of_two(std::uint32_t num);
+template <class T>
+constexpr T next_power_of_two(T num) {
+    return std::bit_ceil(num);
+}

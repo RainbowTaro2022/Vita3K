@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDebugLed.h"
+#include <module/module.h>
 
 EXPORT(int, sceDebugLedInvokeHandle0) {
     return UNIMPLEMENTED();
@@ -32,8 +32,3 @@ EXPORT(int, sceKernelGetGPI) {
 EXPORT(int, sceKernelSetGPO) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceDebugLedInvokeHandle0)
-BRIDGE_IMPL(sceDebugLedInvokeHandle1)
-BRIDGE_IMPL(sceKernelGetGPI)
-BRIDGE_IMPL(sceKernelSetGPO)

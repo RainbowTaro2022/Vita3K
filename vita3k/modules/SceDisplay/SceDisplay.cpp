@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 
 #include <display/functions.h>
 #include <display/state.h>
+#include <io/state.h>
 #include <kernel/state.h>
 #include <packages/functions.h>
 #include <renderer/state.h>
@@ -30,6 +31,11 @@ TRACY_MODULE_NAME(SceDisplay);
 
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
+
+    if (emuenv.display.fps_hack)
+        // a game can use a vcount of 2 to render as 30fps
+        // thus doing this can allow some games to run at 60fps
+        vcount = 1;
 
     uint64_t target_vcount;
     if (is_since_setbuf) {
@@ -61,13 +67,8 @@ EXPORT(SceInt32, _sceDisplayGetFrameBuf, SceDisplayFrameBuf *pFrameBuf, SceDispl
 
     const std::lock_guard<std::mutex> guard(emuenv.display.display_info_mutex);
 
-    DisplayFrameInfo *info;
     // ignore value of sync in GetFrameBuf
-    if (emuenv.display.has_next_frame) {
-        info = &emuenv.display.next_frame;
-    } else {
-        info = &emuenv.display.frame;
-    }
+    DisplayFrameInfo *info = &emuenv.display.sce_frame;
 
     pFrameBuf->base = info->base;
     pFrameBuf->pitch = info->pitch;
@@ -83,9 +84,33 @@ EXPORT(int, _sceDisplayGetFrameBufInternal) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, _sceDisplayGetMaximumFrameBufResolution) {
-    TRACY_FUNC(_sceDisplayGetMaximumFrameBufResolution);
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, _sceDisplayGetMaximumFrameBufResolution, SceInt32 *width, SceInt32 *height) {
+    TRACY_FUNC(_sceDisplayGetMaximumFrameBufResolution, width, height);
+    if (!width || !height)
+        return 0;
+    if (emuenv.cfg.pstv_mode) {
+        *width = 1920;
+        *height = 1088;
+    } else {
+        // PSVita does this exact same check
+        auto &title_id = emuenv.io.title_id;
+        bool cond = (title_id == "PCSG80001")
+            || (title_id == "PCSG80007")
+            || (title_id == "PCSG00318")
+            || (title_id == "PCSG00319")
+            || (title_id == "PCSG00320")
+            || (title_id == "PCSG00321")
+            || (title_id == "PCSH00059");
+        if (cond) {
+            *width = 960;
+            *height = 544;
+
+        } else {
+            *width = 1280;
+            *height = 725;
+        }
+    }
+    return 0;
 }
 
 EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
@@ -121,28 +146,16 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
         STUBBED("SCE_DISPLAY_SETBUF_IMMEDIATE is not supported");
     }
 
-    {
-        const std::lock_guard<std::mutex> guard(emuenv.display.display_info_mutex);
+    DisplayFrameInfo &info = emuenv.display.sce_frame;
 
-        emuenv.display.has_next_frame = true;
-        DisplayFrameInfo &info = emuenv.display.next_frame;
+    info.base = pFrameBuf->base;
+    info.pitch = pFrameBuf->pitch;
+    info.pixelformat = pFrameBuf->pixelformat;
+    info.image_size.x = pFrameBuf->width;
+    info.image_size.y = pFrameBuf->height;
+    update_prediction(emuenv, info);
 
-        info.base = pFrameBuf->base;
-        info.pitch = pFrameBuf->pitch;
-        info.pixelformat = pFrameBuf->pixelformat;
-        info.image_size.x = pFrameBuf->width;
-        info.image_size.y = pFrameBuf->height;
-        emuenv.display.last_setframe_vblank_count = emuenv.display.vblank_count.load();
-
-        // hack (kind of)
-        // we can assume the framebuffer is already fully rendered
-        // (always the case when using gxm, and should also be the case when it is not used)
-        // so set this buffer as ready to be displayed
-        // this should decrease the latency
-        emuenv.display.frame = emuenv.display.next_frame;
-        emuenv.renderer->should_display = true;
-    }
-
+    emuenv.display.last_setframe_vblank_count = emuenv.display.vblank_count.load();
     emuenv.frame_count++;
 
 #ifdef TRACY_ENABLE
@@ -185,10 +198,12 @@ EXPORT(int, sceDisplayGetVcountInternal) {
 
 EXPORT(SceInt32, sceDisplayRegisterVblankStartCallback, SceUID uid) {
     TRACY_FUNC(sceDisplayRegisterVblankStartCallback, uid);
+
     const auto cb = lock_and_find(uid, emuenv.kernel.callbacks, emuenv.kernel.mutex);
     if (!cb)
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_VALUE);
 
+    std::lock_guard<std::mutex> guard(emuenv.display.mutex);
     emuenv.display.vblank_callbacks[uid] = cb;
 
     return 0;
@@ -196,9 +211,10 @@ EXPORT(SceInt32, sceDisplayRegisterVblankStartCallback, SceUID uid) {
 
 EXPORT(SceInt32, sceDisplayUnregisterVblankStartCallback, SceUID uid) {
     TRACY_FUNC(sceDisplayUnregisterVblankStartCallback, uid);
-    if (emuenv.display.vblank_callbacks.find(uid) == emuenv.display.vblank_callbacks.end())
+    if (!emuenv.display.vblank_callbacks.contains(uid))
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_VALUE);
 
+    std::lock_guard<std::mutex> guard(emuenv.display.mutex);
     emuenv.display.vblank_callbacks.erase(uid);
 
     return 0;
@@ -243,25 +259,3 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
-
-BRIDGE_IMPL(_sceDisplayGetFrameBuf)
-BRIDGE_IMPL(_sceDisplayGetFrameBufInternal)
-BRIDGE_IMPL(_sceDisplayGetMaximumFrameBufResolution)
-BRIDGE_IMPL(_sceDisplayGetResolutionInfoInternal)
-BRIDGE_IMPL(_sceDisplaySetFrameBuf)
-BRIDGE_IMPL(_sceDisplaySetFrameBufForCompat)
-BRIDGE_IMPL(_sceDisplaySetFrameBufInternal)
-BRIDGE_IMPL(sceDisplayGetPrimaryHead)
-BRIDGE_IMPL(sceDisplayGetRefreshRate)
-BRIDGE_IMPL(sceDisplayGetVcount)
-BRIDGE_IMPL(sceDisplayGetVcountInternal)
-BRIDGE_IMPL(sceDisplayRegisterVblankStartCallback)
-BRIDGE_IMPL(sceDisplayUnregisterVblankStartCallback)
-BRIDGE_IMPL(sceDisplayWaitSetFrameBuf)
-BRIDGE_IMPL(sceDisplayWaitSetFrameBufCB)
-BRIDGE_IMPL(sceDisplayWaitSetFrameBufMulti)
-BRIDGE_IMPL(sceDisplayWaitSetFrameBufMultiCB)
-BRIDGE_IMPL(sceDisplayWaitVblankStart)
-BRIDGE_IMPL(sceDisplayWaitVblankStartCB)
-BRIDGE_IMPL(sceDisplayWaitVblankStartMulti)
-BRIDGE_IMPL(sceDisplayWaitVblankStartMultiCB)

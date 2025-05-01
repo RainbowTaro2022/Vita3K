@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This file contains internal types used by Vita3K, and the
 // internal Vita3K's implementation of SceGxm's opaque types.
@@ -25,6 +25,7 @@
 
 #include <gxm/types.h>
 
+#include <array>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -35,6 +36,7 @@ struct VertexProgram;
 } // namespace renderer
 
 struct SceGxmColorSurface {
+    // note: the size is correct but the content does not match the PS Vita SceGxmColorSurface
     // opaque start
     struct {
         uint32_t disabled : 1;
@@ -55,22 +57,58 @@ struct SceGxmColorSurface {
 
 static_assert(sizeof(SceGxmColorSurface) == (32 + sizeof(SceGxmTexture)), "Incorrect size.");
 
-struct SceGxmDepthStencilControl {
-    uint32_t content;
-
-    static constexpr uint32_t format_bits = ~0xFFF;
-    static constexpr uint32_t stencil_bits = 0xF;
-    static constexpr uint32_t mask_bit = 0x10;
-    static constexpr uint32_t disabled_bit = 0x20;
-};
-
 struct SceGxmDepthStencilSurface {
-    uint32_t zlsControl;
-    Ptr<void> depthData;
-    Ptr<void> stencilData;
-    float backgroundDepth = 1.0f;
-    SceGxmDepthStencilControl control;
+    struct {
+        uint32_t unk1 : 1; // always set to 1 (except disabled)
+        uint32_t force_load : 1;
+        uint32_t force_store : 1;
+        uint32_t _stride : 8;
+        uint32_t : 1;
+        uint32_t _type_and_format : 20; // bits 0 and 4: type, bit 8: always set to 1 (except disabled), other bits are format
+    };
+    Ptr<void> depth_data;
+    Ptr<void> stencil_data;
+    float background_depth;
+    struct {
+        uint32_t stencil : 8;
+        uint32_t mask : 1;
+        uint32_t unk2 : 1; // always set to 1
+        uint32_t : 22;
+    };
+
+    uint32_t get_stride() const {
+        return (_stride + 1) << 5;
+    }
+
+    void set_stride(uint32_t stride) {
+        _stride = (stride >> 5) - 1;
+    }
+
+    SceGxmDepthStencilSurfaceType get_type() const {
+        return static_cast<SceGxmDepthStencilSurfaceType>((_type_and_format & 0x11) << 12);
+    }
+
+    void set_type(SceGxmDepthStencilSurfaceType type) {
+        _type_and_format &= ~0x11;
+        // also set the bit 8
+        _type_and_format |= ((static_cast<uint32_t>(type) >> 12) & 0x11) | 0x100;
+    }
+
+    SceGxmDepthStencilFormat get_format() const {
+        return static_cast<SceGxmDepthStencilFormat>((_type_and_format & 0x7EEE) << 12);
+    }
+
+    void set_format(SceGxmDepthStencilFormat format) {
+        _type_and_format &= ~0x7EEE;
+        _type_and_format |= (static_cast<uint32_t>(format) >> 12) & 0x7EEE;
+    }
+
+    bool disabled() const {
+        return (_type_and_format & 0x7EEE) == 0;
+    }
 };
+
+static_assert(sizeof(SceGxmDepthStencilSurface) == 5 * sizeof(uint32_t));
 
 struct SceGxmContextParams {
     Ptr<void> hostMem;
@@ -101,7 +139,8 @@ struct SceGxmDeferredContextParams {
     uint32_t fragmentBufferMemSize;
 };
 
-typedef std::array<Ptr<const void>, 15> UniformBuffers;
+typedef Ptr<const void> UniformBuffer;
+typedef std::array<UniformBuffer, SCE_GXM_REAL_MAX_UNIFORM_BUFFER> UniformBuffers;
 typedef SceGxmTexture TextureData;
 typedef Ptr<const void> StreamData;
 
@@ -134,12 +173,13 @@ struct SceGxmSyncObject {
     std::atomic<uint32_t> timestamp_ahead;
 
     // timestamp for the last time the object was displayed
-    std::uint32_t last_display;
+    std::atomic<uint32_t> last_display;
+
+    // last signal operation done, given using the global timestamp
+    uint32_t last_operation_global = 0;
 
     std::mutex lock;
     std::condition_variable cond;
-    // some extra space for additional data, on the Vulkan renderer this points to a RenderTarget* a,d a vector of fences
-    void *extra;
 };
 
 struct GxmContextState {
@@ -238,8 +278,10 @@ struct GxmContextState {
 };
 
 struct SceGxmFragmentProgram {
-    size_t reference_count = 1;
+    std::atomic<uint32_t> reference_count = 1;
     Ptr<const SceGxmProgram> program;
+    // only necessary with async compilation
+    std::atomic<uint32_t> compile_threads_on = 0;
     bool is_maskupdate;
     std::unique_ptr<renderer::FragmentProgram> renderer_data;
 };
@@ -284,12 +326,14 @@ struct SceGxmShaderPatcherParams {
 };
 
 struct SceGxmVertexProgram {
-    size_t reference_count = 1;
+    std::atomic<uint32_t> reference_count = 1;
     Ptr<const SceGxmProgram> program;
     std::vector<SceGxmVertexStream> streams;
     std::vector<SceGxmVertexAttribute> attributes;
     std::unique_ptr<renderer::VertexProgram> renderer_data;
     uint64_t key_hash;
+    // only necessary with async compilation
+    std::atomic<uint32_t> compile_threads_on = 0;
 };
 
 struct SceGxmPrecomputedDraw {
@@ -312,7 +356,8 @@ struct SceGxmPrecomputedFragmentState {
     Ptr<TextureData> textures;
     uint16_t texture_count;
 
-    Ptr<UniformBuffers> uniform_buffers;
+    uint16_t buffer_count;
+    Ptr<UniformBuffer> uniform_buffers;
 };
 
 struct SceGxmPrecomputedVertexState {
@@ -321,7 +366,8 @@ struct SceGxmPrecomputedVertexState {
     Ptr<TextureData> textures;
     uint16_t texture_count;
 
-    Ptr<UniformBuffers> uniform_buffers;
+    uint16_t buffer_count;
+    Ptr<UniformBuffer> uniform_buffers;
 };
 
 static_assert(SCE_GXM_PRECOMPUTED_DRAW_WORD_COUNT * sizeof(uint32_t) >= sizeof(SceGxmPrecomputedDraw), "Precomputed Draw Size Too Big");

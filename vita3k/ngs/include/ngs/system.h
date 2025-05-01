@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,18 +17,17 @@
 
 #pragma once
 
+#include <mem/mempool.h>
+#include <mem/ptr.h>
+#include <ngs/common.h>
+#include <ngs/scheduler.h>
+#include <ngs/types.h>
+#include <util/types.h>
+
 #include <array>
 #include <cstdint>
 #include <mutex>
 #include <vector>
-
-#include <mem/ptr.h>
-#include <util/types.h>
-
-#include <mem/mempool.h>
-#include <ngs/common.h>
-#include <ngs/scheduler.h>
-#include <ngs/types.h>
 
 struct MemState;
 struct KernelState;
@@ -83,7 +82,7 @@ struct ModuleData {
 
     template <typename T>
     T *get_state() {
-        if (voice_state_data.size() == 0) {
+        if (voice_state_data.empty()) {
             voice_state_data.resize(sizeof(T));
             new (&voice_state_data[0]) T();
         }
@@ -117,7 +116,7 @@ public:
     virtual bool process(KernelState &kern, const MemState &mem, const SceUID thread_id, ModuleData &data, std::unique_lock<std::recursive_mutex> &scheduler_lock, std::unique_lock<std::mutex> &voice_lock) = 0;
     virtual uint32_t module_id() const { return 0; }
     virtual uint32_t get_buffer_parameter_size() const = 0;
-    virtual void on_state_change(ModuleData &v, const VoiceState previous) {}
+    virtual void on_state_change(const MemState &mem, ModuleData &v, const VoiceState previous) {}
     virtual void on_param_change(const MemState &mem, ModuleData &data) {}
 };
 
@@ -175,7 +174,7 @@ struct Voice {
     bool remove_patch(const MemState &mem, const Ptr<Patch> patch);
     Ptr<Patch> patch(const MemState &mem, const int32_t index, int32_t subindex, int32_t dest_index, Voice *dest);
 
-    void transition(const VoiceState new_state);
+    void transition(const MemState &mem, const VoiceState new_state);
     bool parse_params(const MemState &mem, const SceNgsModuleParamHeader *header);
     // Return the number of errors that happened
     SceInt32 parse_params_block(const MemState &mem, const SceNgsModuleParamHeader *header, const SceUInt32 size);
@@ -215,7 +214,7 @@ struct System : public MempoolObject {
     static uint32_t get_required_memspace_size(SceNgsSystemInitParams *parameters);
 };
 
-bool deliver_data(const MemState &mem, Voice *source, const uint8_t output_port,
+bool deliver_data(const MemState &mem, const std::vector<Voice *> &voice_queue, Voice *source, const uint8_t output_port,
     const VoiceProduct &data_to_deliver);
 
 bool init_system(State &ngs, const MemState &mem, SceNgsSystemInitParams *parameters, Ptr<void> memspace, const uint32_t memspace_size);
@@ -227,6 +226,4 @@ void voice_definition_init(State &ngs, MemState &mem);
 Ptr<VoiceDefinition> get_voice_definition(State &ngs, MemState &mem, ngs::BussType type);
 void apply_voice_definition(VoiceDefinition *definition, std::vector<std::unique_ptr<ngs::Module>> &mods);
 uint32_t get_voice_definition_size(VoiceDefinition *definition);
-
-void atrac9_get_buffer_parameter(uint32_t start_sample, uint32_t num_samples, uint32_t info, SceNgsAT9SkipBufferInfo &parameter);
 } // namespace ngs

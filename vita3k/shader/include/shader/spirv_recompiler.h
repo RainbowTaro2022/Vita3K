@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,65 +24,18 @@
 #include <features/state.h>
 
 #include <string>
-#include <utility>
 #include <vector>
-
-namespace spv {
-class Builder;
-}
 
 namespace shader {
 
 static constexpr int COLOR_ATTACHMENT_TEXTURE_SLOT_IMAGE = 0;
 static constexpr int MASK_TEXTURE_SLOT_IMAGE = 1;
 static constexpr int COLOR_ATTACHMENT_RAW_TEXTURE_SLOT_IMAGE = 3;
-static constexpr uint32_t CURRENT_VERSION = 11;
-
-struct RenderVertUniformBlock {
-    std::array<float, 4> viewport_flip;
-    float viewport_flag;
-    float screen_width;
-    float screen_height;
-    float z_offset;
-    float z_scale;
-};
-
-struct RenderVertUniformBlockWithMapping : public RenderVertUniformBlock {
-    uint64_t buffer_addresses[SCE_GXM_REAL_MAX_UNIFORM_BUFFER] = {};
-};
-
-// used internally to identify the field by the shader recompiler
-// it is put next to the RenderVertUniformBlock so we don't forget to update both fields every time
-enum VertUniformFieldId : uint32_t {
-    VERT_UNIFORM_viewport_flip,
-    VERT_UNIFORM_viewport_flag,
-    VERT_UNIFORM_screen_width,
-    VERT_UNIFORM_screen_height,
-    VERT_UNIFORM_z_offset,
-    VERT_UNIFORM_z_scale,
-    VERT_UNIFORM_buffer_addresses
-};
-
-struct RenderFragUniformBlock {
-    float back_disabled;
-    float front_disabled;
-    float writing_mask;
-    float use_raw_image;
-    float res_multiplier;
-};
-
-struct RenderFragUniformBlockWithMapping : public RenderFragUniformBlock {
-    uint64_t buffer_addresses[SCE_GXM_REAL_MAX_UNIFORM_BUFFER] = {};
-};
-
-enum FragUniformFieldId : uint32_t {
-    FRAG_UNIFORM_back_disabled,
-    FRAG_UNIFORM_front_disabled,
-    FRAG_UNIFORM_writing_mask,
-    FRAG_UNIFORM_use_raw_image,
-    FRAG_UNIFORM_res_multiplier,
-    FRAG_UNIFORM_buffer_addresses
-};
+static constexpr uint32_t CURRENT_VERSION = 13;
+// fragment shader using the rendering surface as a storage image (because of shader interlock) have a line
+// layout (constant_id = GAMMA_CORRECTION_SPECIALIZATIO_ID) const bool is_srgb = false;
+// Setting this constant to true performs gamma correction in the shader
+static constexpr uint32_t GAMMA_CORRECTION_SPECIALIZATION_ID = 0;
 
 enum struct Target {
     GLSLOpenGL,
@@ -117,8 +70,8 @@ void spirv_disasm_print(const usse::SpirvCode &spirv_binary, std::string *spirv_
 
 // the returned object will only have its glsl or spirv field non-empty depending on the target
 GeneratedShader convert_gxp(const SceGxmProgram &program, const std::string &shader_hash, const FeatureState &features, const Target target, const Hints &hints, bool maskupdate = false,
-    bool force_shader_debug = false, std::function<bool(const std::string &ext, const std::string &dump)> dumper = nullptr);
+    bool force_shader_debug = false, const std::function<bool(const std::string &ext, const std::string &dump)> &dumper = nullptr);
 
-void convert_gxp_to_glsl_from_filepath(const std::string &shader_filepath);
+void convert_gxp_to_glsl_from_filepath(const std::string &shader_filepath_utf8);
 
 } // namespace shader

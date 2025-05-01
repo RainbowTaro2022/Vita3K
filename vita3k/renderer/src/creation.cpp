@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,19 +19,16 @@
 #include <renderer/commands.h>
 #include <renderer/driver_functions.h>
 #include <renderer/state.h>
-#include <renderer/texture_cache_state.h>
 #include <renderer/types.h>
 
 #include <renderer/gl/functions.h>
-#include <renderer/texture_cache_state.h>
 #include <renderer/vulkan/functions.h>
 #include <renderer/vulkan/state.h>
 
 #include <gxm/functions.h>
-#include <gxm/types.h>
 #include <renderer/functions.h>
+#include <util/align.h>
 #include <util/log.h>
-#include <util/string_utils.h>
 #include <util/tracy.h>
 
 namespace renderer {
@@ -43,7 +40,7 @@ static void layout_ssbo_offset_from_uniform_buffer_sizes(UniformBufferSizes &siz
         if (sizes[i] != 0) {
             // Round to vec4 unit
             offsets[i] = last_offset;
-            last_offset += ((sizes[i] + 3) / 4 * 4);
+            last_offset += align(sizes[i], 4);
         } else {
             offsets[i] = static_cast<std::uint32_t>(-1);
         }
@@ -123,8 +120,8 @@ COMMAND(handle_create_render_target) {
         uint16_t nb_macroblocks_y = (params->flags >> 12) & 0b111;
 
         // the width and height should be multiple of 128
-        (*render_target)->macroblock_width = (params->width / nb_macroblocks_x) * renderer.res_multiplier;
-        (*render_target)->macroblock_height = (params->height / nb_macroblocks_y) * renderer.res_multiplier;
+        (*render_target)->macroblock_width = static_cast<uint16_t>((params->width / nb_macroblocks_x) * renderer.res_multiplier);
+        (*render_target)->macroblock_height = static_cast<uint16_t>((params->height / nb_macroblocks_y) * renderer.res_multiplier);
     }
 
     complete_command(renderer, helper, result);
@@ -178,7 +175,7 @@ COMMAND(handle_memory_unmap) {
 }
 
 // Client
-bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProgram &program, const SceGxmBlendInfo *blend, GXPPtrMap &gxp_ptr_map, const char *base_path, const char *title_id) {
+bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProgram &program, const SceGxmBlendInfo *blend, GXPPtrMap &gxp_ptr_map) {
     switch (state.current_backend) {
     case Backend::OpenGL:
         gl::create(fp, dynamic_cast<gl::GLState &>(state), program, blend);
@@ -197,7 +194,7 @@ bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProg
     fp->hash = sha256(&program, program.size);
     gxp_ptr_map.emplace(fp->hash, &program);
 
-    shader::usse::get_uniform_buffer_sizes(program, fp->uniform_buffer_sizes);
+    fp->buffer_count = shader::usse::get_uniform_buffer_sizes(program, fp->uniform_buffer_sizes);
     layout_ssbo_offset_from_uniform_buffer_sizes(fp->uniform_buffer_sizes, fp->uniform_buffer_data_offsets, fp->max_total_uniform_buffer_storage);
     fp->textures_used = gxp::get_textures_used(program);
     fp->texture_count = std::bit_width(fp->textures_used.to_ulong());
@@ -205,7 +202,7 @@ bool create(std::unique_ptr<FragmentProgram> &fp, State &state, const SceGxmProg
     return true;
 }
 
-bool create(std::unique_ptr<VertexProgram> &vp, State &state, const SceGxmProgram &program, GXPPtrMap &gxp_ptr_map, const char *base_path, const char *title_id) {
+bool create(std::unique_ptr<VertexProgram> &vp, State &state, const SceGxmProgram &program, GXPPtrMap &gxp_ptr_map, const std::vector<SceGxmVertexAttribute> &attributes) {
     switch (state.current_backend) {
     case Backend::OpenGL:
         gl::create(vp, dynamic_cast<gl::GLState &>(state), program);
@@ -224,16 +221,19 @@ bool create(std::unique_ptr<VertexProgram> &vp, State &state, const SceGxmProgra
     vp->hash = sha256(&program, program.size);
     gxp_ptr_map.emplace(vp->hash, &program);
 
-    shader::usse::get_uniform_buffer_sizes(program, vp->uniform_buffer_sizes);
+    vp->buffer_count = shader::usse::get_uniform_buffer_sizes(program, vp->uniform_buffer_sizes);
     shader::usse::get_attribute_informations(program, vp->attribute_infos);
     layout_ssbo_offset_from_uniform_buffer_sizes(vp->uniform_buffer_sizes, vp->uniform_buffer_data_offsets, vp->max_total_uniform_buffer_storage);
     vp->textures_used = gxp::get_textures_used(program);
     vp->texture_count = std::bit_width(vp->textures_used.to_ulong());
 
     if (vp->attribute_infos.empty()) {
-        vp->stripped_symbols_checked = false;
-    } else {
-        vp->stripped_symbols_checked = true;
+        // Insert some symbols here
+        if (program.primary_reg_count != 0) {
+            for (size_t i = 0; i < attributes.size(); i++) {
+                vp->attribute_infos.emplace(attributes[i].regIndex, shader::usse::AttributeInformation(static_cast<uint16_t>(i), SCE_GXM_PARAMETER_TYPE_F32, 1, false, false, false));
+            }
+        }
     }
 
     return true;
@@ -244,25 +244,25 @@ void create(SceGxmSyncObject *sync, State &state) {
     sync->last_display = 0;
     sync->timestamp_current = 0;
     sync->timestamp_ahead = 0;
-    sync->extra = 0;
 }
 
 void destroy(SceGxmSyncObject *sync, State &state) {
     // nothing to do right now
 }
 
-bool init(SDL_Window *window, std::unique_ptr<State> &state, Backend backend, const Config &config, const char *base_path) {
+bool init(SDL_Window *window, std::unique_ptr<State> &state, Backend backend, const Config &config, const Root &root_paths) {
     switch (backend) {
     case Backend::OpenGL:
         state = std::make_unique<gl::GLState>();
-        if (!gl::create(window, state, base_path, config.hashless_texture_cache))
+        state->init_paths(root_paths);
+        if (!gl::create(window, state, config))
             return false;
         break;
 
     case Backend::Vulkan:
         state = std::make_unique<vulkan::VKState>(config.gpu_idx);
-
-        if (!vulkan::create(window, state, base_path, config))
+        state->init_paths(root_paths);
+        if (!vulkan::create(window, state, config))
             return false;
         break;
 

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,16 +17,10 @@
 
 #include <shader/usse_translator.h>
 
-#include <SPIRV/GLSL.std.450.h>
 #include <SPIRV/SpvBuilder.h>
 
-#include <shader/usse_constant_table.h>
-#include <shader/usse_decoder_helpers.h>
-#include <shader/usse_disasm.h>
 #include <shader/usse_types.h>
 #include <util/log.h>
-
-#include <gxm/functions.h>
 
 #include <bitset>
 
@@ -55,6 +49,7 @@ spv::Id USSETranslatorVisitor::swizzle_to_spv_comp(spv::Id composite, spv::Id ty
     case SwizzleChannel::C_2: break;
 
     case SwizzleChannel::C_H: break;
+    default: break;
     }
 
     LOG_WARN("Swizzle channel {} unsupported", static_cast<Imm4>(swizzle));

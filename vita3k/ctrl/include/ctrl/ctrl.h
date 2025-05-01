@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include <util/types.h>
 
-enum SceCtrlErrorCode {
+enum SceCtrlErrorCode : uint32_t {
     SCE_CTRL_ERROR_INVALID_ARG = 0x80340001,
     SCE_CTRL_ERROR_PRIV_REQUIRED = 0x80340002,
     SCE_CTRL_ERROR_NO_DEVICE = 0x80340020,
@@ -28,7 +28,7 @@ enum SceCtrlErrorCode {
     SCE_CTRL_ERROR_FATAL = 0x803400FF
 };
 
-enum SceCtrlButtons {
+enum SceCtrlButtons : uint32_t {
     SCE_CTRL_SELECT = 0x00000001, //!< Select button.
     SCE_CTRL_L3 = 0x00000002, //!< L3 button.
     SCE_CTRL_R3 = 0x00000004, //!< R3 button.
@@ -37,10 +37,10 @@ enum SceCtrlButtons {
     SCE_CTRL_RIGHT = 0x00000020, //!< Right D-Pad button.
     SCE_CTRL_DOWN = 0x00000040, //!< Down D-Pad button.
     SCE_CTRL_LEFT = 0x00000080, //!< Left D-Pad button.
-    SCE_CTRL_LTRIGGER = 0x00000100, //!< Left trigger.
-    SCE_CTRL_L2 = SCE_CTRL_LTRIGGER, //!< L2 button.
-    SCE_CTRL_RTRIGGER = 0x00000200, //!< Right trigger.
-    SCE_CTRL_R2 = SCE_CTRL_RTRIGGER, //!< R2 button.
+    SCE_CTRL_L = 0x00000100, //!< L button.
+    SCE_CTRL_L2 = SCE_CTRL_L, //!< L2 button.
+    SCE_CTRL_R = 0x00000200, //!< R button.
+    SCE_CTRL_R2 = SCE_CTRL_R, //!< R2 button.
     SCE_CTRL_L1 = 0x00000400, //!< L1 button.
     SCE_CTRL_R1 = 0x00000800, //!< R1 button.
     SCE_CTRL_TRIANGLE = 0x00001000, //!< Triangle button.

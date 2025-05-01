@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -123,9 +123,10 @@ EXPORT(int, sceAppMgrAppParamGetInt) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(SceInt32, sceAppMgrAppParamGetString, int pid, int param, char *string, int length) {
+EXPORT(SceInt32, sceAppMgrAppParamGetString, int pid, int param, char *string, SceSize length) {
     TRACY_FUNC(sceAppMgrAppParamGetString, pid, param, string, length);
-    return CALL_EXPORT(_sceAppMgrAppParamGetString, pid, param, string, length);
+    sceAppMgrAppParamGetStringOptParam opt{ length, 0, 0, 0 };
+    return CALL_EXPORT(_sceAppMgrAppParamGetString, pid, param, string, &opt);
 }
 
 EXPORT(int, sceAppMgrAppParamSetString) {
@@ -477,9 +478,9 @@ EXPORT(int, sceAppMgrLoopBackMount) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceAppMgrMmsMount) {
-    TRACY_FUNC(sceAppMgrMmsMount);
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceAppMgrMmsMount, SceInt32 id, char *mount_point) {
+    TRACY_FUNC(sceAppMgrMmsMount, id, mount_point);
+    return CALL_EXPORT(_sceAppMgrMmsMount, id, mount_point);
 }
 
 EXPORT(int, sceAppMgrOverwriteLaunchParamForShell) {
@@ -813,132 +814,3 @@ EXPORT(int, sceAppMgrWorkDirMountById) {
     TRACY_FUNC(sceAppMgrWorkDirMountById);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(_sceAppMgrGetAppState)
-BRIDGE_IMPL(sceAppMgrAcidDirSet)
-BRIDGE_IMPL(sceAppMgrAcquireSoundOutExclusive3)
-BRIDGE_IMPL(sceAppMgrAddContAddMount)
-BRIDGE_IMPL(sceAppMgrAddContMount)
-BRIDGE_IMPL(sceAppMgrAppDataMount)
-BRIDGE_IMPL(sceAppMgrAppDataMountById)
-BRIDGE_IMPL(sceAppMgrAppMount)
-BRIDGE_IMPL(sceAppMgrAppParamGetInt)
-BRIDGE_IMPL(sceAppMgrAppParamGetString)
-BRIDGE_IMPL(sceAppMgrAppParamSetString)
-BRIDGE_IMPL(sceAppMgrAppUmount)
-BRIDGE_IMPL(sceAppMgrBgdlGetQueueStatus)
-BRIDGE_IMPL(sceAppMgrCaptureFrameBufDMACByAppId)
-BRIDGE_IMPL(sceAppMgrCaptureFrameBufIFTUByAppId)
-BRIDGE_IMPL(sceAppMgrCheckRifGD)
-BRIDGE_IMPL(sceAppMgrContentInstallPeriodStart)
-BRIDGE_IMPL(sceAppMgrContentInstallPeriodStop)
-BRIDGE_IMPL(sceAppMgrConvertVs0UserDrivePath)
-BRIDGE_IMPL(sceAppMgrDeclareShellProcess2)
-BRIDGE_IMPL(sceAppMgrDestroyAppByName)
-BRIDGE_IMPL(sceAppMgrDrmClose)
-BRIDGE_IMPL(sceAppMgrDrmOpen)
-BRIDGE_IMPL(sceAppMgrForceUmount)
-BRIDGE_IMPL(sceAppMgrGameDataMount)
-BRIDGE_IMPL(sceAppMgrGetAppInfo)
-BRIDGE_IMPL(sceAppMgrGetAppMgrState)
-BRIDGE_IMPL(sceAppMgrGetAppParam)
-BRIDGE_IMPL(sceAppMgrGetAppParam2)
-BRIDGE_IMPL(sceAppMgrGetBootParam)
-BRIDGE_IMPL(sceAppMgrGetBudgetInfo)
-BRIDGE_IMPL(sceAppMgrGetCoredumpStateForShell)
-BRIDGE_IMPL(sceAppMgrGetCurrentBgmState)
-BRIDGE_IMPL(sceAppMgrGetCurrentBgmState2)
-BRIDGE_IMPL(sceAppMgrGetDevInfo)
-BRIDGE_IMPL(sceAppMgrGetFgAppInfo)
-BRIDGE_IMPL(sceAppMgrGetIdByName)
-BRIDGE_IMPL(sceAppMgrGetMediaTypeFromDrive)
-BRIDGE_IMPL(sceAppMgrGetMediaTypeFromDriveByPid)
-BRIDGE_IMPL(sceAppMgrGetMountProcessNum)
-BRIDGE_IMPL(sceAppMgrGetNameById)
-BRIDGE_IMPL(sceAppMgrGetPfsDrive)
-BRIDGE_IMPL(sceAppMgrGetPidListForShell)
-BRIDGE_IMPL(sceAppMgrGetRawPath)
-BRIDGE_IMPL(sceAppMgrGetRawPathOfApp0ByAppIdForShell)
-BRIDGE_IMPL(sceAppMgrGetRawPathOfApp0ByPidForShell)
-BRIDGE_IMPL(sceAppMgrGetRecommendedScreenOrientation)
-BRIDGE_IMPL(sceAppMgrGetRunningAppIdListForShell)
-BRIDGE_IMPL(sceAppMgrGetSaveDataInfo)
-BRIDGE_IMPL(sceAppMgrGetSaveDataInfoForSpecialExport)
-BRIDGE_IMPL(sceAppMgrGetStatusByAppId)
-BRIDGE_IMPL(sceAppMgrGetStatusById)
-BRIDGE_IMPL(sceAppMgrGetStatusByName)
-BRIDGE_IMPL(sceAppMgrGetSystemDataFilePlayReady)
-BRIDGE_IMPL(sceAppMgrGetUserDirPath)
-BRIDGE_IMPL(sceAppMgrGetUserDirPathById)
-BRIDGE_IMPL(sceAppMgrGetVs0UserDataDrive)
-BRIDGE_IMPL(sceAppMgrGetVs0UserModuleDrive)
-BRIDGE_IMPL(sceAppMgrInitSafeMemoryById)
-BRIDGE_IMPL(sceAppMgrInstallDirMount)
-BRIDGE_IMPL(sceAppMgrIsCameraActive)
-BRIDGE_IMPL(sceAppMgrLaunchAppByName)
-BRIDGE_IMPL(sceAppMgrLaunchAppByName2)
-BRIDGE_IMPL(sceAppMgrLaunchAppByName2ForShell)
-BRIDGE_IMPL(sceAppMgrLaunchAppByName2ndStage)
-BRIDGE_IMPL(sceAppMgrLaunchAppByNameForShell)
-BRIDGE_IMPL(sceAppMgrLaunchAppByPath4)
-BRIDGE_IMPL(sceAppMgrLaunchAppByUri)
-BRIDGE_IMPL(sceAppMgrLaunchAppByUri2)
-BRIDGE_IMPL(sceAppMgrLaunchVideoStreamingApp)
-BRIDGE_IMPL(sceAppMgrLoadExec)
-BRIDGE_IMPL(sceAppMgrLoadSaveDataSystemFile)
-BRIDGE_IMPL(sceAppMgrLoopBackFormat)
-BRIDGE_IMPL(sceAppMgrLoopBackMount)
-BRIDGE_IMPL(sceAppMgrMmsMount)
-BRIDGE_IMPL(sceAppMgrOverwriteLaunchParamForShell)
-BRIDGE_IMPL(sceAppMgrPeekLaunchParamForShell)
-BRIDGE_IMPL(sceAppMgrPhotoMount)
-BRIDGE_IMPL(sceAppMgrPhotoUmount)
-BRIDGE_IMPL(sceAppMgrPspSaveDataGetParams)
-BRIDGE_IMPL(sceAppMgrPspSaveDataRead)
-BRIDGE_IMPL(sceAppMgrPspSaveDataRootMount)
-BRIDGE_IMPL(sceAppMgrReceiveEvent)
-BRIDGE_IMPL(sceAppMgrReceiveEventNum)
-BRIDGE_IMPL(sceAppMgrReceiveNotificationRequestForShell)
-BRIDGE_IMPL(sceAppMgrReceiveShellEvent)
-BRIDGE_IMPL(sceAppMgrReceiveSystemEvent)
-BRIDGE_IMPL(sceAppMgrSaveDataAddMount)
-BRIDGE_IMPL(sceAppMgrSaveDataDataRemove)
-BRIDGE_IMPL(sceAppMgrSaveDataDataRemove2)
-BRIDGE_IMPL(sceAppMgrSaveDataDataSave)
-BRIDGE_IMPL(sceAppMgrSaveDataDataSave2)
-BRIDGE_IMPL(sceAppMgrSaveDataGetQuota)
-BRIDGE_IMPL(sceAppMgrSaveDataMount)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotCreate)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotDelete)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotFileClose)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotFileGetParam)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotFileOpen)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotGetParam)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotGetStatus)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotInit)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotSetParam)
-BRIDGE_IMPL(sceAppMgrSaveDataSlotSetStatus)
-BRIDGE_IMPL(sceAppMgrSaveDataUmount)
-BRIDGE_IMPL(sceAppMgrSendNotificationRequest)
-BRIDGE_IMPL(sceAppMgrSendParam)
-BRIDGE_IMPL(sceAppMgrSendSystemEvent)
-BRIDGE_IMPL(sceAppMgrSendSystemEvent2)
-BRIDGE_IMPL(sceAppMgrSetBackRenderPortOwner)
-BRIDGE_IMPL(sceAppMgrSetBgmProxyApp)
-BRIDGE_IMPL(sceAppMgrSetNetworkDisconnectionWarningDialogState)
-BRIDGE_IMPL(sceAppMgrSetPowerSaveMode)
-BRIDGE_IMPL(sceAppMgrSetRecommendedScreenOrientationForShell)
-BRIDGE_IMPL(sceAppMgrSetShellScreenOrientation)
-BRIDGE_IMPL(sceAppMgrSetSystemDataFile)
-BRIDGE_IMPL(sceAppMgrSetSystemDataFilePlayReady)
-BRIDGE_IMPL(sceAppMgrSystemParamDateTimeGetConf)
-BRIDGE_IMPL(sceAppMgrSystemParamGetInt)
-BRIDGE_IMPL(sceAppMgrSystemParamGetString)
-BRIDGE_IMPL(sceAppMgrThemeDataMount)
-BRIDGE_IMPL(sceAppMgrTrophyMount)
-BRIDGE_IMPL(sceAppMgrTrophyMountById)
-BRIDGE_IMPL(sceAppMgrUmount)
-BRIDGE_IMPL(sceAppMgrUmountByPid)
-BRIDGE_IMPL(sceAppMgrUpdateSaveDataParam)
-BRIDGE_IMPL(sceAppMgrWorkDirMount)
-BRIDGE_IMPL(sceAppMgrWorkDirMountById)

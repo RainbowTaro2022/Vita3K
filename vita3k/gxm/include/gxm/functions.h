@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -28,19 +28,27 @@ namespace gxm {
 SceGxmColorBaseFormat get_base_format(SceGxmColorFormat src);
 size_t bits_per_pixel(SceGxmColorBaseFormat base_format);
 size_t get_stride_in_bytes(const SceGxmColorFormat src, const std::size_t stride_in_pixels);
+
 // Textures.
-size_t get_width(const SceGxmTexture *texture);
-size_t get_height(const SceGxmTexture *texture);
-SceGxmTextureFormat get_format(const SceGxmTexture *texture);
+uint32_t get_width(const SceGxmTexture &texture);
+uint32_t get_height(const SceGxmTexture &texture);
+SceGxmTextureFormat get_format(const SceGxmTexture &texture);
 SceGxmTextureBaseFormat get_base_format(SceGxmTextureFormat src);
-size_t get_stride_in_bytes(const SceGxmTexture *texture);
+uint32_t get_num_components(SceGxmTextureBaseFormat fmt);
+std::pair<uint32_t, uint32_t> get_block_size(SceGxmTextureBaseFormat base_format);
+uint32_t get_stride_in_bytes(const SceGxmTexture &texture);
+uint32_t bits_per_pixel(SceGxmTextureBaseFormat base_format);
+// get the size of the first mip of the first face
+uint32_t texture_size_first_mip(const SceGxmTexture &texture);
+bool is_bcn_format(SceGxmTextureBaseFormat base_format);
+bool is_pvrt_format(SceGxmTextureBaseFormat base_format);
 bool is_block_compressed_format(SceGxmTextureBaseFormat base_format);
 bool is_paletted_format(SceGxmTextureBaseFormat base_format);
 bool is_yuv_format(SceGxmTextureBaseFormat base_format);
-size_t attribute_format_size(SceGxmAttributeFormat format);
-size_t index_element_size(SceGxmIndexFormat format);
+uint32_t attribute_format_size(SceGxmAttributeFormat format);
 bool is_stream_instancing(SceGxmIndexSource source);
 bool convert_color_format_to_texture_format(SceGxmColorFormat format, SceGxmTextureFormat &dest_format);
+
 // Transfer
 uint32_t get_bits_per_pixel(SceGxmTransferFormat Format);
 } // namespace gxm
@@ -59,12 +67,6 @@ using GxmVertexOutputTexCoordInfos = std::array<uint8_t, 10>;
 void log_parameter(const SceGxmProgramParameter &parameter);
 
 /**
- * \brief Returns raw parameter name from GXP
- *        Therefore, if parameter belongs in a struct, includes it in the form of "struct_name.field_name"
- */
-std::string parameter_name_raw(const SceGxmProgramParameter &parameter);
-
-/**
  * \brief If parameter belongs in a struct, returns the struct field name only
  */
 std::string parameter_name(const SceGxmProgramParameter &parameter);
@@ -73,8 +75,6 @@ std::string parameter_name(const SceGxmProgramParameter &parameter);
  * \brief If parameter belongs in a struct, returns the struct name only
  */
 std::string parameter_struct_name(const SceGxmProgramParameter &parameter);
-const SceGxmProgramParameter *program_parameters(const SceGxmProgram &program);
-SceGxmParameterType parameter_type(const SceGxmProgramParameter &parameter);
 GenericParameterType parameter_generic_type(const SceGxmProgramParameter &parameter);
 /**
  * \return SceGxmVertexProgramOutput (bitfield)
@@ -82,10 +82,9 @@ GenericParameterType parameter_generic_type(const SceGxmProgramParameter &parame
 SceGxmVertexProgramOutputs get_vertex_outputs(const SceGxmProgram &program, GxmVertexOutputTexCoordInfos *coord_infos = nullptr);
 SceGxmFragmentProgramInputs get_fragment_inputs(const SceGxmProgram &program);
 
-const int get_parameter_type_size(const SceGxmParameterType type);
-const int get_num_32_bit_components(const SceGxmParameterType type, const uint16_t num_comp);
+int get_parameter_type_size(const SceGxmParameterType type);
+int get_num_32_bit_components(const SceGxmParameterType type, const uint16_t num_comp);
 
-const SceGxmProgramParameterContainer *get_containers(const SceGxmProgram &program);
 const SceGxmProgramParameterContainer *get_container_by_index(const SceGxmProgram &program, const std::uint16_t idx);
 const char *get_container_name(const std::uint16_t idx);
 

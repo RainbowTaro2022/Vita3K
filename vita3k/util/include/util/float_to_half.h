@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,26 +20,13 @@
 // original source:https://stackoverflow.com/questions/1659440/32-bit-to-16-bit-floating-point-conversion
 // public domain
 
-#include <bit>
+#include "util/bit_cast.h"
+#include "util/warning.h"
+
 #include <climits> // CHAR_BIT
 #include <cstdint> // uint32_t, uint64_t, etc.
-#include <cstring> // memcpy
 #include <limits> // numeric_limits
 #include <utility> // is_integral_v, is_floating_point_v, forward
-
-#ifndef __cpp_lib_bit_cast
-namespace std {
-template <typename T, typename U>
-T bit_cast(U &&u) {
-    static_assert(sizeof(T) == sizeof(U));
-    union {
-        T t;
-    }; // prevent construction
-    std::memcpy(&t, &u, sizeof(t));
-    return t;
-}
-} // namespace std
-#endif
 
 namespace util {
 template <typename T>
@@ -96,6 +83,7 @@ struct float_type_info
     static_assert(std::is_floating_point_v<flt_type>);
 };
 
+DISABLE_WARNING_BEGIN(4804, "-Wbool-operation")
 template <typename E>
 struct raw_float_encoder {
     using enc = E;
@@ -163,6 +151,7 @@ struct raw_float_encoder {
         return std::bit_cast<F>(bits);
     }
 };
+DISABLE_WARNING_END
 
 using flt16_encoder = raw_float_encoder<raw_flt16_type_info>;
 

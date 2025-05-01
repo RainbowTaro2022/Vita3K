@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,15 +15,127 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+#include <module/module.h>
+
 #include <np/functions.h>
 #include <np/state.h>
 #include <np/trophy/context.h>
+#include <rtc/rtc.h>
 #include <util/log.h>
-
-#include "SceNpTrophy.h"
 
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceNpTrophy);
+
+using SceNpTrophyHandle = int32_t;
+using SceNpTrophyID = int32_t;
+using SceNpTrophyGroupId = int32_t;
+
+enum SceNpTrophyErrorCode {
+    SCE_NP_TROPHY_ERROR_UNKNOWN = 0x80551600,
+    SCE_NP_TROPHY_ERROR_NOT_INITIALIZED = 0x80551601,
+    SCE_NP_TROPHY_ERROR_ALREADY_INITIALIZED = 0x80551602,
+    SCE_NP_TROPHY_ERROR_NO_MEMORY = 0x80551603,
+    SCE_NP_TROPHY_ERROR_INVALID_ARGUMENT = 0x80551604,
+    SCE_NP_TROPHY_ERROR_INSUFFICIENT_BUFFER = 0x80551605,
+    SCE_NP_TROPHY_ERROR_EXCEEDS_MAX = 0x80551606,
+    SCE_NP_TROPHY_ERROR_ABORT = 0x80551607,
+    SCE_NP_TROPHY_ERROR_INVALID_HANDLE = 0x80551608,
+    SCE_NP_TROPHY_ERROR_INVALID_CONTEXT = 0x80551609,
+    SCE_NP_TROPHY_ERROR_INVALID_NPCOMMID = 0x8055160a,
+    SCE_NP_TROPHY_ERROR_INVALID_NPCOMMSIGN = 0x8055160b,
+    SCE_NP_TROPHY_ERROR_NPCOMMSIGN_VERIFICATION_FAILURE = 0x8055160c,
+    SCE_NP_TROPHY_ERROR_INVALID_GROUP_ID = 0x8055160d,
+    SCE_NP_TROPHY_ERROR_INVALID_TROPHY_ID = 0x8055160e,
+    SCE_NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED = 0x8055160f,
+    SCE_NP_TROPHY_ERROR_PLATINUM_CANNOT_UNLOCK = 0x80551610,
+    SCE_NP_TROPHY_ERROR_ACCOUNTID_NOT_MATCH = 0x80551611,
+    SCE_NP_TROPHY_ERROR_SETUP_REQUIRED = 0x80551612,
+    SCE_NP_TROPHY_ERROR_ALREADY_SETUP = 0x80551613,
+    SCE_NP_TROPHY_ERROR_BROKEN_DATA = 0x80551614,
+    SCE_NP_TROPHY_ERROR_INSUFFICIENT_EM_SPACE = 0x80551615,
+    SCE_NP_TROPHY_ERROR_CONTEXT_ALREADY_EXISTS = 0x80551616,
+    SCE_NP_TROPHY_ERROR_TRP_FILE_VERIFICATION_FAILURE = 0x80551617,
+    SCE_NP_TROPHY_ERROR_ICON_FILE_NOT_FOUND = 0x80551618,
+    SCE_NP_TROPHY_ERROR_TRP_FILE_NOT_FOUND = 0x80551619,
+    SCE_NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT = 0x8055161a,
+    SCE_NP_TROPHY_ERROR_UNSUPPORTED_TRP_FILE = 0x8055161b,
+    SCE_NP_TROPHY_ERROR_INVALID_TROPHY_CONF_FORMAT = 0x8055161c,
+    SCE_NP_TROPHY_ERROR_UNSUPPORTED_TROPHY_CONF = 0x8055161d,
+    SCE_NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED = 0x8055161e,
+    SCE_NP_TROPHY_ERROR_UNLOCK_DENIED = 0x8055161f,
+    SCE_NP_TROPHY_ERROR_INSUFFICIENT_MC_SPACE = 0x80551620,
+    SCE_NP_TROPHY_ERROR_DEBUG_FAILURE = 0x80551621
+};
+
+#define SCE_NP_TROPHY_GAME_TITLE_MAX_SIZE 128
+#define SCE_NP_TROPHY_GAME_DESCR_MAX_SIZE 1024
+#define SCE_NP_TROPHY_NAME_MAX_SIZE 128
+#define SCE_NP_TROPHY_DESCR_MAX_SIZE 1024
+#define SCE_NP_TROPHY_GROUP_TITLE_MAX_SIZE 128
+#define SCE_NP_TROPHY_GROUP_DESCR_MAX_SIZE 1024
+
+struct SceNpTrophyGameDetails {
+    SceSize size;
+    SceUInt32 numGroups;
+    SceUInt32 numTrophies;
+    SceUInt32 numPlatinum;
+    SceUInt32 numGold;
+    SceUInt32 numSilver;
+    SceUInt32 numBronze;
+    SceChar8 title[SCE_NP_TROPHY_GAME_TITLE_MAX_SIZE];
+    SceChar8 description[SCE_NP_TROPHY_GAME_DESCR_MAX_SIZE];
+};
+
+struct SceNpTrophyGameData {
+    SceSize size;
+    SceUInt32 unlockedTrophies;
+    SceUInt32 unlockedPlatinum;
+    SceUInt32 unlockedGold;
+    SceUInt32 unlockedSilver;
+    SceUInt32 unlockedBronze;
+    SceUInt32 progressPercentage;
+};
+
+struct SceNpTrophyGroupDetails {
+    SceSize size;
+    SceNpTrophyGroupId groupId;
+    SceUInt32 numTrophies;
+    SceUInt32 numPlatinum;
+    SceUInt32 numGold;
+    SceUInt32 numSilver;
+    SceUInt32 numBronze;
+    SceChar8 title[SCE_NP_TROPHY_GROUP_TITLE_MAX_SIZE];
+    SceChar8 description[SCE_NP_TROPHY_GROUP_DESCR_MAX_SIZE];
+};
+
+struct SceNpTrophyGroupData {
+    SceSize size;
+    SceNpTrophyGroupId groupId;
+    SceUInt32 unlockedTrophies;
+    SceUInt32 unlockedPlatinum;
+    SceUInt32 unlockedGold;
+    SceUInt32 unlockedSilver;
+    SceUInt32 unlockedBronze;
+    SceUInt32 progressPercentage;
+};
+
+struct SceNpTrophyDetails {
+    SceSize size;
+    SceNpTrophyID trophyId;
+    np::trophy::SceNpTrophyGrade trophyGrade;
+    SceNpTrophyGroupId groupId;
+    SceBool hidden;
+    SceChar8 name[SCE_NP_TROPHY_NAME_MAX_SIZE];
+    SceChar8 description[SCE_NP_TROPHY_DESCR_MAX_SIZE];
+};
+
+struct SceNpTrophyData {
+    SceSize size;
+    SceNpTrophyID trophyId;
+    SceBool unlocked;
+    SceUInt8 reserved[4];
+    SceRtcTick timestamp;
+};
 
 EXPORT(int, sceNpTrophyAbortHandle) {
     TRACY_FUNC(sceNpTrophyAbortHandle);
@@ -139,8 +251,8 @@ EXPORT(int, sceNpTrophyGetGameInfo, np::trophy::ContextHandle context_handle, Sc
         if (!context->get_trophy_set(name, detail))
             return RET_ERROR(SCE_NP_TROPHY_ERROR_UNSUPPORTED_TROPHY_CONF);
 
-        memcpy((char *)details->title, name.c_str(), name.size() + 1);
-        memcpy((char *)details->description, detail.c_str(), detail.size() + 1);
+        memcpy(details->title, name.c_str(), name.size() + 1);
+        memcpy(details->description, detail.c_str(), detail.size() + 1);
 
         for (uint32_t i = 0; i < context->trophy_count; i++) {
             switch (context->trophy_kinds[i]) {
@@ -230,8 +342,8 @@ EXPORT(int, sceNpTrophyGetGroupInfo, np::trophy::ContextHandle context_handle, S
         if (!context->get_trophy_set(name, detail))
             return RET_ERROR(SCE_NP_TROPHY_ERROR_UNSUPPORTED_TROPHY_CONF);
 
-        memcpy((char *)details->title, name.c_str(), name.size() + 1);
-        memcpy((char *)details->description, detail.c_str(), detail.size() + 1);
+        memcpy(details->title, name.c_str(), name.size() + 1);
+        memcpy(details->description, detail.c_str(), detail.size() + 1);
 
         for (uint32_t i = 0; i < context->trophy_count; i++) {
             switch (context->trophy_kinds[i]) {
@@ -335,8 +447,8 @@ EXPORT(int, sceNpTrophyGetTrophyInfo, np::trophy::ContextHandle context_handle, 
         if (!context->get_trophy_details(trophy_id, name, detail))
             return RET_ERROR(SCE_NP_TROPHY_ERROR_UNSUPPORTED_TROPHY_CONF);
 
-        memcpy((char *)details->name, name.c_str(), name.size() + 1);
-        memcpy((char *)details->description, detail.c_str(), detail.size() + 1);
+        memcpy(details->name, name.c_str(), name.size() + 1);
+        memcpy(details->description, detail.c_str(), detail.size() + 1);
     }
 
     if (data) {
@@ -469,12 +581,12 @@ EXPORT(int, sceNpTrophyUnlockTrophy, np::trophy::ContextHandle context_handle, S
         }
     }
 
-    if ((context->platinum_trophy_id != SCE_NP_TROPHY_INVALID_TROPHY_ID) && (context->total_trophy_unlocked() == (context->trophy_count - 1))) {
+    if ((context->platinum_trophy_id != np::SCE_NP_TROPHY_INVALID_TROPHY_ID) && (context->total_trophy_unlocked() == (context->trophy_count - 1))) {
         // Force unlock platinum trophy
         context->unlock_trophy(context->platinum_trophy_id, &error, true);
         *platinum_id = context->platinum_trophy_id;
     } else
-        *platinum_id = SCE_NP_TROPHY_INVALID_TROPHY_ID;
+        *platinum_id = np::SCE_NP_TROPHY_INVALID_TROPHY_ID;
 
     const int err = do_trophy_callback(emuenv, context, trophy_id);
 
@@ -482,26 +594,10 @@ EXPORT(int, sceNpTrophyUnlockTrophy, np::trophy::ContextHandle context_handle, S
         return err;
     }
 
-    if (*platinum_id != SCE_NP_TROPHY_INVALID_TROPHY_ID) {
+    if (*platinum_id != np::SCE_NP_TROPHY_INVALID_TROPHY_ID) {
         // Do trophy callback for platinum too! But this time, ignore the error
         do_trophy_callback(emuenv, context, context->platinum_trophy_id);
     }
 
     return 0;
 }
-
-BRIDGE_IMPL(sceNpTrophyAbortHandle)
-BRIDGE_IMPL(sceNpTrophyCreateContext)
-BRIDGE_IMPL(sceNpTrophyCreateHandle)
-BRIDGE_IMPL(sceNpTrophyDestroyContext)
-BRIDGE_IMPL(sceNpTrophyDestroyHandle)
-BRIDGE_IMPL(sceNpTrophyGetGameIcon)
-BRIDGE_IMPL(sceNpTrophyGetGameInfo)
-BRIDGE_IMPL(sceNpTrophyGetGroupIcon)
-BRIDGE_IMPL(sceNpTrophyGetGroupInfo)
-BRIDGE_IMPL(sceNpTrophyGetTrophyIcon)
-BRIDGE_IMPL(sceNpTrophyGetTrophyInfo)
-BRIDGE_IMPL(sceNpTrophyGetTrophyUnlockState)
-BRIDGE_IMPL(sceNpTrophyInit)
-BRIDGE_IMPL(sceNpTrophyTerm)
-BRIDGE_IMPL(sceNpTrophyUnlockTrophy)

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,15 +18,15 @@
 #pragma once
 
 #include <gui/state.h>
+#include <ime/state.h>
+#include <io/vfs.h>
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
-struct DisplayState;
 struct EmuEnvState;
-struct SDL_Window;
-struct NpTrophyUnlockCallbackData;
 
 namespace gui {
 
@@ -41,13 +41,14 @@ void browse_live_area_apps_list(GuiState &gui, EmuEnvState &emuenv, const uint32
 void browse_pages_manual(GuiState &gui, EmuEnvState &emuenv, const uint32_t button);
 void browse_save_data_dialog(GuiState &gui, EmuEnvState &emuenv, const uint32_t button);
 void browse_users_management(GuiState &gui, EmuEnvState &emuenv, const uint32_t button);
-void close_and_run_new_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
+void close_and_run_new_app(EmuEnvState &emuenv, const std::string &app_path);
 void close_live_area_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
 void close_system_app(GuiState &gui, EmuEnvState &emuenv);
 void delete_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
+void erase_app_notice(GuiState &gui, const std::string &title_id);
 void get_app_info(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
 size_t get_app_size(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
-std::vector<App>::iterator get_app_index(GuiState &gui, const std::string &app_path);
+App *get_app_index(GuiState &gui, const std::string &app_path);
 std::map<std::string, ImGui_Texture>::const_iterator get_app_icon(GuiState &gui, const std::string &app_path);
 std::vector<std::string>::iterator get_live_area_current_open_apps_list_index(GuiState &gui, const std::string &app_path);
 std::map<DateTime, std::string> get_date_time(GuiState &gui, EmuEnvState &emuenv, const tm &date_time);
@@ -98,8 +99,10 @@ bool init_vita3k_update(GuiState &gui);
 void pre_init(GuiState &gui, EmuEnvState &emuenv);
 void pre_load_app(GuiState &gui, EmuEnvState &emuenv, bool live_area, const std::string &app_path);
 void pre_run_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
+void reset_controller_binding(EmuEnvState &emuenv);
 void save_apps_cache(GuiState &gui, EmuEnvState &emuenv);
 void save_user(GuiState &gui, EmuEnvState &emuenv, const std::string &user_id);
+void select_app(GuiState &gui, const std::string &title_id);
 void set_config(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
 void set_shaders_compiled_display(GuiState &gui, EmuEnvState &emuenv);
 void update_app(GuiState &gui, EmuEnvState &emuenv, const std::string &app_path);
@@ -110,7 +113,7 @@ void update_time_app_used(GuiState &gui, EmuEnvState &emuenv, const std::string 
 void save_notice_list(EmuEnvState &emuenv);
 
 void draw_begin(GuiState &gui, EmuEnvState &emuenv);
-void draw_end(GuiState &emuenv, SDL_Window *window);
+void draw_end(GuiState &gui);
 void draw_vita_area(GuiState &gui, EmuEnvState &emuenv);
 void draw_ui(GuiState &gui, EmuEnvState &emuenv);
 
@@ -124,8 +127,9 @@ void draw_reinstall_dialog(GenericDialogState *status, GuiState &gui, EmuEnvStat
 void draw_pre_compiling_shaders_progress(GuiState &gui, EmuEnvState &emuenv, const uint32_t &total);
 void draw_shaders_count_compiled(GuiState &gui, EmuEnvState &emuenv);
 void draw_trophies_unlocked(GuiState &gui, EmuEnvState &emuenv);
+void draw_touchpad_cursor(EmuEnvState &emuenv);
 void draw_perf_overlay(GuiState &gui, EmuEnvState &emuenv);
 
-ImTextureID load_image(GuiState &gui, const char *data, const std::uint32_t size);
+ImTextureID load_image(GuiState &gui, const uint8_t *data, const int size);
 
 } // namespace gui

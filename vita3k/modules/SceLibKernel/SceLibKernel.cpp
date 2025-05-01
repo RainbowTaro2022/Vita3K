@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #include <cpu/functions.h>
 #include <dlmalloc.h>
 #include <io/functions.h>
-#include <kernel/load_self.h>
 #include <kernel/state.h>
 #include <kernel/sync_primitives.h>
 #include <packages/functions.h>
@@ -40,7 +39,7 @@
 #include <util/log.h>
 #include <util/tracy.h>
 
-#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 enum class TimerFlags : uint32_t {
@@ -56,7 +55,7 @@ enum class TimerFlags : uint32_t {
 
 TRACY_MODULE_NAME(SceLibKernel);
 
-inline uint64_t get_current_time() {
+inline static uint64_t get_current_time() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch())
         .count();
@@ -90,16 +89,18 @@ EXPORT(int, __stack_chk_fail) {
     TRACY_FUNC(__stack_chk_fail);
     LOG_CRITICAL("Stack corruption on TID: {}", thread_id);
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
     auto ctx = save_context(*thread->cpu);
     LOG_ERROR("{}", ctx.description());
+
+    assert(false); // if this triggers then something is seriously wrong somewhere else
 
     return UNIMPLEMENTED();
 }
 
 EXPORT(int, _sceKernelCreateLwMutex, Ptr<SceKernelLwMutexWork> workarea, const char *name, unsigned int attr, int init_count, Ptr<SceKernelLwMutexOptParam> opt_param) {
     TRACY_FUNC(_sceKernelCreateLwMutex, workarea, name, attr, init_count, opt_param);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     Ptr<SceKernelCreateLwMutex_opt> options = Ptr<SceKernelCreateLwMutex_opt>(stack_alloc(*thread->cpu, sizeof(SceKernelCreateLwMutex_opt)));
     options.get(emuenv.mem)->init_count = init_count;
@@ -164,9 +165,30 @@ EXPORT(int, sceClibMemcpyChk) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(Ptr<void>, sceClibMemcpy_safe, Ptr<void> dst, const void *src, SceSize len) {
+EXPORT(Ptr<void>, sceClibMemcpy_safe, Ptr<void> dst, const Ptr<void> src, SceSize len) {
     TRACY_FUNC(sceClibMemcpy_safe, dst, src, len);
-    memcpy(dst.get(emuenv.mem), src, len);
+    /*
+    should be 1:1 to real hw, asserts are in the same position as decompiled code,
+    still call memcpy when the breakpoint happens just like in real hw, should practically
+    be the same as just calling memcpy, but with a bit more checks for the developers,
+    asserts do get annoying if the game tends to do memcpy on overlapping pointers, which is weird,
+    if they in fact do get annoying very easily they can just be deleted, we still have the log_error
+    */
+    if (len == 0)
+        return dst;
+
+    if (dst.address() == src.address()) {
+        LOG_ERROR("sceClibMemcpy({},{},{}) src == dst", log_hex_full(src.address()), log_hex_full(dst.address()), len);
+        assert(false);
+        CALL_EXPORT(sceClibMemcpy, dst, src.get(emuenv.mem), len);
+        return dst;
+    }
+    const auto diff = std::abs((int)(src.address() - dst.address()));
+    if (len > diff) {
+        LOG_ERROR("sceClibMemcpy({},{},{}) src/dst overlap", log_hex_full(src.address()), log_hex_full(dst.address()), len);
+        assert(false);
+    }
+    CALL_EXPORT(sceClibMemcpy, dst, src.get(emuenv.mem), len);
     return dst;
 }
 
@@ -275,7 +297,7 @@ EXPORT(int, sceClibPrintf, const char *fmt, module::vargs args) {
     TRACY_FUNC(sceClibPrintf, fmt);
     std::vector<char> buffer(KiB(1));
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     if (!thread) {
         return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
@@ -294,7 +316,7 @@ EXPORT(int, sceClibPrintf, const char *fmt, module::vargs args) {
 
 EXPORT(int, sceClibSnprintf, char *dst, SceSize dst_max_size, const char *fmt, module::vargs args) {
     TRACY_FUNC(sceClibSnprintf, dst, dst_max_size, fmt);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     if (!thread) {
         return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
@@ -306,7 +328,7 @@ EXPORT(int, sceClibSnprintf, char *dst, SceSize dst_max_size, const char *fmt, m
         return SCE_KERNEL_ERROR_INVALID_ARGUMENT;
     }
 
-    return SCE_KERNEL_OK;
+    return result;
 }
 
 EXPORT(int, sceClibSnprintfChk) {
@@ -359,7 +381,7 @@ EXPORT(int, sceClibStrlcpyChk) {
 
 EXPORT(int, sceClibStrncasecmp, const char *s1, const char *s2, SceSize len) {
     TRACY_FUNC(sceClibStrncasecmp, s1, s2, len);
-#ifdef WIN32
+#ifdef _WIN32
     return _strnicmp(s1, s2, len);
 #else
     return strncasecmp(s1, s2, len);
@@ -432,7 +454,7 @@ EXPORT(int, sceClibVdprintf) {
 
 EXPORT(int, sceClibVprintf, const char *fmt, module::vargs args) {
     TRACY_FUNC(sceClibVprintf, fmt);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
     if (!thread) {
         return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
     }
@@ -451,7 +473,7 @@ EXPORT(int, sceClibVprintf, const char *fmt, module::vargs args) {
 
 EXPORT(int, sceClibVsnprintf, char *dst, SceSize dst_max_size, const char *fmt, Address list) {
     TRACY_FUNC(sceClibVsnprintf, dst, dst_max_size, fmt, list);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     module::vargs args(list);
     if (!thread) {
@@ -575,7 +597,7 @@ EXPORT(int, sceIoIoctlAsync) {
 
 EXPORT(SceOff, sceIoLseek, const SceUID fd, const SceOff offset, const SceIoSeekMode whence) {
     TRACY_FUNC(sceIoLseek, fd, offset, whence);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     Ptr<_sceIoLseekOpt> options = Ptr<_sceIoLseekOpt>(stack_alloc(*thread->cpu, sizeof(_sceIoLseekOpt)));
     options.get(emuenv.mem)->offset = offset;
@@ -605,6 +627,10 @@ EXPORT(SceUID, sceIoOpen, const char *file, const int flags, const SceMode mode)
     if (file == nullptr) {
         return RET_ERROR(SCE_ERROR_ERRNO_EINVAL);
     }
+
+    if (emuenv.cfg.current_config.file_loading_delay > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(emuenv.cfg.current_config.file_loading_delay));
+
     LOG_INFO("Opening file: {}", file);
     return open_file(emuenv.io, file, flags, emuenv.pref_path, export_name);
 }
@@ -1159,7 +1185,7 @@ EXPORT(int, sceKernelCreateEventFlag, const char *name, unsigned int attr, unsig
 
 EXPORT(int, sceKernelCreateLwCond, Ptr<SceKernelLwCondWork> workarea, const char *name, SceUInt attr, Ptr<SceKernelLwMutexWork> workarea_mutex, Ptr<SceKernelLwCondOptParam> opt_param) {
     TRACY_FUNC(sceKernelCreateLwCond, workarea, name, attr, workarea_mutex, opt_param);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     Ptr<SceKernelCreateLwCond_opt> options = Ptr<SceKernelCreateLwCond_opt>(stack_alloc(*thread->cpu, sizeof(SceKernelCreateLwCond_opt)));
     options.get(emuenv.mem)->workarea_mutex = workarea_mutex;
@@ -1186,7 +1212,7 @@ EXPORT(int, sceKernelCreateMsgPipeWithLR) {
 
 EXPORT(int, sceKernelCreateMutex, const char *name, SceUInt attr, int init_count, SceKernelMutexOptParam *opt_param) {
     TRACY_FUNC(sceKernelCreateMutex, name, attr, init_count, opt_param);
-    if ((attr & SCE_KERNEL_MUTEX_ATTR_CEILING)) {
+    if (attr & SCE_KERNEL_MUTEX_ATTR_CEILING) {
         STUBBED("priority ceiling feature is not supported");
     }
 
@@ -1204,7 +1230,7 @@ EXPORT(SceUID, sceKernelCreateRWLock, const char *name, SceUInt32 attr, SceKerne
 
 EXPORT(SceUID, sceKernelCreateSema, const char *name, SceUInt attr, int initVal, int maxVal, Ptr<SceKernelSemaOptParam> option) {
     TRACY_FUNC(sceKernelCreateSema, name, attr, initVal, maxVal, option);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     Ptr<SceKernelCreateSema_opt> options = Ptr<SceKernelCreateSema_opt>(stack_alloc(*thread->cpu, sizeof(SceKernelCreateSema_opt)));
     options.get(emuenv.mem)->maxVal = maxVal;
@@ -1216,7 +1242,7 @@ EXPORT(SceUID, sceKernelCreateSema, const char *name, SceUInt attr, int initVal,
 
 EXPORT(int, sceKernelCreateSema_16XX, const char *name, SceUInt attr, int initVal, int maxVal, Ptr<SceKernelSemaOptParam> option) {
     TRACY_FUNC(sceKernelCreateSema_16XX, name, attr, initVal, maxVal, option);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     Ptr<SceKernelCreateSema_opt> options = Ptr<SceKernelCreateSema_opt>(stack_alloc(*thread->cpu, sizeof(SceKernelCreateSema_opt)));
     options.get(emuenv.mem)->maxVal = maxVal;
@@ -1233,7 +1259,7 @@ EXPORT(SceUID, sceKernelCreateSimpleEvent, const char *name, SceUInt32 attr, Sce
 
 EXPORT(SceUID, sceKernelCreateThread, const char *name, SceKernelThreadEntry entry, int init_priority, int stack_size, SceUInt attr, int cpu_affinity_mask, Ptr<SceKernelThreadOptParam> option) {
     TRACY_FUNC(sceKernelCreateThread, name, entry, init_priority, stack_size, attr, cpu_affinity_mask, option);
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     auto options = Ptr<SceKernelCreateThread_opt>(stack_alloc(*thread->cpu, sizeof(SceKernelCreateThread_opt))).get(emuenv.mem);
     options->stack_size = stack_size;
@@ -1282,7 +1308,7 @@ EXPORT(SceInt32, sceKernelGetCondInfo, SceUID condId, Ptr<SceKernelCondInfo> pIn
 
 EXPORT(int, sceKernelGetCurrentThreadVfpException) {
     TRACY_FUNC(sceKernelGetCurrentThreadVfpException);
-    return UNIMPLEMENTED();
+    return emuenv.kernel.get_thread(thread_id)->tls.get_ptr<int>().get(emuenv.mem)[TLS_VFP_EXCEPTION];
 }
 
 EXPORT(SceInt32, sceKernelGetEventFlagInfo, SceUID evfId, Ptr<SceKernelEventFlagInfo> pInfo) {
@@ -1295,9 +1321,9 @@ EXPORT(int, sceKernelGetEventInfo) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceKernelGetEventPattern) {
-    TRACY_FUNC(sceKernelGetEventPattern);
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceKernelGetEventPattern, SceUID event_id, SceUInt32 *get_pattern) {
+    TRACY_FUNC(sceKernelGetEventPattern, event_id, get_pattern);
+    return CALL_EXPORT(_sceKernelGetEventPattern, event_id, get_pattern);
 }
 
 EXPORT(int, sceKernelGetLwCondInfo) {
@@ -1434,7 +1460,7 @@ EXPORT(int, sceKernelGetThreadEventInfo) {
 
 EXPORT(int, sceKernelGetThreadExitStatus, SceUID thid, SceInt32 *pExitStatus) {
     TRACY_FUNC(sceKernelGetThreadExitStatus, thid, pExitStatus);
-    const ThreadStatePtr thread = lock_and_find(thid ? thid : thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
     if (!thread) {
         return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
     }
@@ -1501,7 +1527,7 @@ EXPORT(SceUID, sceKernelLoadModule, char *path, int flags, SceKernelLMOption *op
     return CALL_EXPORT(_sceKernelLoadModule, path, flags, option);
 }
 
-EXPORT(SceUID, sceKernelLoadStartModule, const char *moduleFileName, SceSize args, const Ptr<void> argp, SceUInt32 flags, const SceKernelLMOption *pOpt, int *pRes) {
+EXPORT(SceUID, sceKernelLoadStartModule, const char *moduleFileName, SceSize args, Ptr<const void> argp, SceUInt32 flags, const SceKernelLMOption *pOpt, int *pRes) {
     TRACY_FUNC(sceKernelLoadStartModule, moduleFileName, args, argp, flags, pOpt, pRes);
     return CALL_EXPORT(_sceKernelLoadStartModule, moduleFileName, args, argp, flags, pOpt, pRes);
 }
@@ -1694,24 +1720,24 @@ EXPORT(int, sceKernelStackChkFail) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceKernelStartModule, SceUID uid, SceSize args, const Ptr<void> argp, SceUInt32 flags, const Ptr<SceKernelStartModuleOpt> pOpt, int *pRes) {
+EXPORT(int, sceKernelStartModule, SceUID uid, SceSize args, Ptr<const void> argp, SceUInt32 flags, const SceKernelStartModuleOpt *pOpt, int *pRes) {
     TRACY_FUNC(sceKernelStartModule, uid, args, argp, flags, pOpt, pRes);
     return CALL_EXPORT(_sceKernelStartModule, uid, args, argp, flags, pOpt, pRes);
 }
 
-EXPORT(int, sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) {
+EXPORT(int, sceKernelStartThread, SceUID thid, SceSize arglen, const Ptr<void> argp) {
     TRACY_FUNC(sceKernelStartThread, thid, arglen, argp);
     return CALL_EXPORT(_sceKernelStartThread, thid, arglen, argp);
 }
 
-EXPORT(int, sceKernelStopModule) {
-    TRACY_FUNC(sceKernelStopModule);
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelStopModule, SceUID uid, SceSize args, Ptr<const void> argp, SceUInt32 flags, const SceKernelStopModuleOpt *pOpt, int *pRes) {
+    TRACY_FUNC(sceKernelStopModule, uid, args, argp, flags, pOpt, pRes);
+    return CALL_EXPORT(_sceKernelStopModule, uid, args, argp, flags, pOpt, pRes);
 }
 
-EXPORT(int, sceKernelStopUnloadModule) {
-    TRACY_FUNC(sceKernelStopUnloadModule);
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelStopUnloadModule, SceUID uid, SceSize args, Ptr<const void> argp, SceUInt32 flags, const void *pOpt, int *pRes) {
+    TRACY_FUNC(sceKernelStopUnloadModule, uid, args, argp, flags, pOpt, pRes);
+    return CALL_EXPORT(_sceKernelStopUnloadModule, uid, args, argp, flags, pOpt, pRes);
 }
 
 EXPORT(int, sceKernelTryLockLwMutex, Ptr<SceKernelLwMutexWork> workarea, int lock_count) {
@@ -1758,9 +1784,9 @@ EXPORT(int, sceKernelTrySendMsgPipeVector) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceKernelUnloadModule) {
-    TRACY_FUNC(sceKernelUnloadModule);
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelUnloadModule, SceUID uid, SceUInt32 flags, const void *pOpt) {
+    TRACY_FUNC(sceKernelUnloadModule, uid, flags, pOpt);
+    return CALL_EXPORT(_sceKernelUnloadModule, uid, flags, pOpt);
 }
 
 EXPORT(int, sceKernelUnlockLwMutex, Ptr<SceKernelLwMutexWork> workarea, int unlock_count) {
@@ -2045,334 +2071,3 @@ EXPORT(int, sceSblGcAuthMgrSclkSetData2) {
     TRACY_FUNC(sceSblGcAuthMgrSclkSetData2);
     return UNIMPLEMENTED();
 }
-
-VAR_BRIDGE_IMPL(__stack_chk_guard)
-VAR_BRIDGE_IMPL(__sce_libcparam)
-BRIDGE_IMPL(__sce_aeabi_idiv0)
-BRIDGE_IMPL(__sce_aeabi_ldiv0)
-BRIDGE_IMPL(__stack_chk_fail)
-BRIDGE_IMPL(_sceKernelCreateLwMutex)
-BRIDGE_IMPL(sceClibAbort)
-BRIDGE_IMPL(sceClibDprintf)
-BRIDGE_IMPL(sceClibLookCtypeTable)
-BRIDGE_IMPL(sceClibMemchr)
-BRIDGE_IMPL(sceClibMemcmp)
-BRIDGE_IMPL(sceClibMemcmpConstTime)
-BRIDGE_IMPL(sceClibMemcpy)
-BRIDGE_IMPL(sceClibMemcpyChk)
-BRIDGE_IMPL(sceClibMemcpy_safe)
-BRIDGE_IMPL(sceClibMemmove)
-BRIDGE_IMPL(sceClibMemmoveChk)
-BRIDGE_IMPL(sceClibMemset)
-BRIDGE_IMPL(sceClibMemsetChk)
-BRIDGE_IMPL(sceClibMspaceCalloc)
-BRIDGE_IMPL(sceClibMspaceCreate)
-BRIDGE_IMPL(sceClibMspaceDestroy)
-BRIDGE_IMPL(sceClibMspaceFree)
-BRIDGE_IMPL(sceClibMspaceIsHeapEmpty)
-BRIDGE_IMPL(sceClibMspaceMalloc)
-BRIDGE_IMPL(sceClibMspaceMallocStats)
-BRIDGE_IMPL(sceClibMspaceMallocStatsFast)
-BRIDGE_IMPL(sceClibMspaceMallocUsableSize)
-BRIDGE_IMPL(sceClibMspaceMemalign)
-BRIDGE_IMPL(sceClibMspaceRealloc)
-BRIDGE_IMPL(sceClibMspaceReallocalign)
-BRIDGE_IMPL(sceClibPrintf)
-BRIDGE_IMPL(sceClibSnprintf)
-BRIDGE_IMPL(sceClibSnprintfChk)
-BRIDGE_IMPL(sceClibStrcatChk)
-BRIDGE_IMPL(sceClibStrchr)
-BRIDGE_IMPL(sceClibStrcmp)
-BRIDGE_IMPL(sceClibStrcpyChk)
-BRIDGE_IMPL(sceClibStrlcat)
-BRIDGE_IMPL(sceClibStrlcatChk)
-BRIDGE_IMPL(sceClibStrlcpy)
-BRIDGE_IMPL(sceClibStrlcpyChk)
-BRIDGE_IMPL(sceClibStrncasecmp)
-BRIDGE_IMPL(sceClibStrncat)
-BRIDGE_IMPL(sceClibStrncatChk)
-BRIDGE_IMPL(sceClibStrncmp)
-BRIDGE_IMPL(sceClibStrncpy)
-BRIDGE_IMPL(sceClibStrncpyChk)
-BRIDGE_IMPL(sceClibStrnlen)
-BRIDGE_IMPL(sceClibStrrchr)
-BRIDGE_IMPL(sceClibStrstr)
-BRIDGE_IMPL(sceClibStrtoll)
-BRIDGE_IMPL(sceClibTolower)
-BRIDGE_IMPL(sceClibToupper)
-BRIDGE_IMPL(sceClibVdprintf)
-BRIDGE_IMPL(sceClibVprintf)
-BRIDGE_IMPL(sceClibVsnprintf)
-BRIDGE_IMPL(sceClibVsnprintfChk)
-BRIDGE_IMPL(sceIoChstat)
-BRIDGE_IMPL(sceIoChstatAsync)
-BRIDGE_IMPL(sceIoChstatByFd)
-BRIDGE_IMPL(sceIoClose2)
-BRIDGE_IMPL(sceIoCompleteMultiple)
-BRIDGE_IMPL(sceIoDevctl)
-BRIDGE_IMPL(sceIoDevctlAsync)
-BRIDGE_IMPL(sceIoDopen)
-BRIDGE_IMPL(sceIoDread)
-BRIDGE_IMPL(sceIoGetstat)
-BRIDGE_IMPL(sceIoGetstatAsync)
-BRIDGE_IMPL(sceIoGetstatByFd)
-BRIDGE_IMPL(sceIoIoctl)
-BRIDGE_IMPL(sceIoIoctlAsync)
-BRIDGE_IMPL(sceIoLseek)
-BRIDGE_IMPL(sceIoLseekAsync)
-BRIDGE_IMPL(sceIoMkdir)
-BRIDGE_IMPL(sceIoMkdirAsync)
-BRIDGE_IMPL(sceIoOpen)
-BRIDGE_IMPL(sceIoOpenAsync)
-BRIDGE_IMPL(sceIoPread)
-BRIDGE_IMPL(sceIoPreadAsync)
-BRIDGE_IMPL(sceIoPwrite)
-BRIDGE_IMPL(sceIoPwriteAsync)
-BRIDGE_IMPL(sceIoRead2)
-BRIDGE_IMPL(sceIoRemove)
-BRIDGE_IMPL(sceIoRemoveAsync)
-BRIDGE_IMPL(sceIoRename)
-BRIDGE_IMPL(sceIoRenameAsync)
-BRIDGE_IMPL(sceIoRmdir)
-BRIDGE_IMPL(sceIoRmdirAsync)
-BRIDGE_IMPL(sceIoSync)
-BRIDGE_IMPL(sceIoSyncAsync)
-BRIDGE_IMPL(sceIoWrite2)
-BRIDGE_IMPL(sceKernelAtomicAddAndGet16)
-BRIDGE_IMPL(sceKernelAtomicAddAndGet32)
-BRIDGE_IMPL(sceKernelAtomicAddAndGet64)
-BRIDGE_IMPL(sceKernelAtomicAddAndGet8)
-BRIDGE_IMPL(sceKernelAtomicAddUnless16)
-BRIDGE_IMPL(sceKernelAtomicAddUnless32)
-BRIDGE_IMPL(sceKernelAtomicAddUnless64)
-BRIDGE_IMPL(sceKernelAtomicAddUnless8)
-BRIDGE_IMPL(sceKernelAtomicAndAndGet16)
-BRIDGE_IMPL(sceKernelAtomicAndAndGet32)
-BRIDGE_IMPL(sceKernelAtomicAndAndGet64)
-BRIDGE_IMPL(sceKernelAtomicAndAndGet8)
-BRIDGE_IMPL(sceKernelAtomicClearAndGet16)
-BRIDGE_IMPL(sceKernelAtomicClearAndGet32)
-BRIDGE_IMPL(sceKernelAtomicClearAndGet64)
-BRIDGE_IMPL(sceKernelAtomicClearAndGet8)
-BRIDGE_IMPL(sceKernelAtomicClearMask16)
-BRIDGE_IMPL(sceKernelAtomicClearMask32)
-BRIDGE_IMPL(sceKernelAtomicClearMask64)
-BRIDGE_IMPL(sceKernelAtomicClearMask8)
-BRIDGE_IMPL(sceKernelAtomicCompareAndSet16)
-BRIDGE_IMPL(sceKernelAtomicCompareAndSet32)
-BRIDGE_IMPL(sceKernelAtomicCompareAndSet64)
-BRIDGE_IMPL(sceKernelAtomicCompareAndSet8)
-BRIDGE_IMPL(sceKernelAtomicDecIfPositive16)
-BRIDGE_IMPL(sceKernelAtomicDecIfPositive32)
-BRIDGE_IMPL(sceKernelAtomicDecIfPositive64)
-BRIDGE_IMPL(sceKernelAtomicDecIfPositive8)
-BRIDGE_IMPL(sceKernelAtomicGetAndAdd16)
-BRIDGE_IMPL(sceKernelAtomicGetAndAdd32)
-BRIDGE_IMPL(sceKernelAtomicGetAndAdd64)
-BRIDGE_IMPL(sceKernelAtomicGetAndAdd8)
-BRIDGE_IMPL(sceKernelAtomicGetAndAnd16)
-BRIDGE_IMPL(sceKernelAtomicGetAndAnd32)
-BRIDGE_IMPL(sceKernelAtomicGetAndAnd64)
-BRIDGE_IMPL(sceKernelAtomicGetAndAnd8)
-BRIDGE_IMPL(sceKernelAtomicGetAndClear16)
-BRIDGE_IMPL(sceKernelAtomicGetAndClear32)
-BRIDGE_IMPL(sceKernelAtomicGetAndClear64)
-BRIDGE_IMPL(sceKernelAtomicGetAndClear8)
-BRIDGE_IMPL(sceKernelAtomicGetAndOr16)
-BRIDGE_IMPL(sceKernelAtomicGetAndOr32)
-BRIDGE_IMPL(sceKernelAtomicGetAndOr64)
-BRIDGE_IMPL(sceKernelAtomicGetAndOr8)
-BRIDGE_IMPL(sceKernelAtomicGetAndSet16)
-BRIDGE_IMPL(sceKernelAtomicGetAndSet32)
-BRIDGE_IMPL(sceKernelAtomicGetAndSet64)
-BRIDGE_IMPL(sceKernelAtomicGetAndSet8)
-BRIDGE_IMPL(sceKernelAtomicGetAndSub16)
-BRIDGE_IMPL(sceKernelAtomicGetAndSub32)
-BRIDGE_IMPL(sceKernelAtomicGetAndSub64)
-BRIDGE_IMPL(sceKernelAtomicGetAndSub8)
-BRIDGE_IMPL(sceKernelAtomicGetAndXor16)
-BRIDGE_IMPL(sceKernelAtomicGetAndXor32)
-BRIDGE_IMPL(sceKernelAtomicGetAndXor64)
-BRIDGE_IMPL(sceKernelAtomicGetAndXor8)
-BRIDGE_IMPL(sceKernelAtomicOrAndGet16)
-BRIDGE_IMPL(sceKernelAtomicOrAndGet32)
-BRIDGE_IMPL(sceKernelAtomicOrAndGet64)
-BRIDGE_IMPL(sceKernelAtomicOrAndGet8)
-BRIDGE_IMPL(sceKernelAtomicSet16)
-BRIDGE_IMPL(sceKernelAtomicSet32)
-BRIDGE_IMPL(sceKernelAtomicSet64)
-BRIDGE_IMPL(sceKernelAtomicSet8)
-BRIDGE_IMPL(sceKernelAtomicSubAndGet16)
-BRIDGE_IMPL(sceKernelAtomicSubAndGet32)
-BRIDGE_IMPL(sceKernelAtomicSubAndGet64)
-BRIDGE_IMPL(sceKernelAtomicSubAndGet8)
-BRIDGE_IMPL(sceKernelAtomicXorAndGet16)
-BRIDGE_IMPL(sceKernelAtomicXorAndGet32)
-BRIDGE_IMPL(sceKernelAtomicXorAndGet64)
-BRIDGE_IMPL(sceKernelAtomicXorAndGet8)
-BRIDGE_IMPL(sceKernelBacktrace)
-BRIDGE_IMPL(sceKernelBacktraceSelf)
-BRIDGE_IMPL(sceKernelCallModuleExit)
-BRIDGE_IMPL(sceKernelCallWithChangeStack)
-BRIDGE_IMPL(sceKernelCancelEvent)
-BRIDGE_IMPL(sceKernelCancelEventFlag)
-BRIDGE_IMPL(sceKernelCancelEventWithSetPattern)
-BRIDGE_IMPL(sceKernelCancelMsgPipe)
-BRIDGE_IMPL(sceKernelCancelMutex)
-BRIDGE_IMPL(sceKernelCancelRWLock)
-BRIDGE_IMPL(sceKernelCancelSema)
-BRIDGE_IMPL(sceKernelCancelTimer)
-BRIDGE_IMPL(sceKernelChangeCurrentThreadAttr)
-BRIDGE_IMPL(sceKernelCheckThreadStack)
-BRIDGE_IMPL(sceKernelCloseModule)
-BRIDGE_IMPL(sceKernelCreateCond)
-BRIDGE_IMPL(sceKernelCreateEventFlag)
-BRIDGE_IMPL(sceKernelCreateLwCond)
-BRIDGE_IMPL(sceKernelCreateLwMutex)
-BRIDGE_IMPL(sceKernelCreateMsgPipe)
-BRIDGE_IMPL(sceKernelCreateMsgPipeWithLR)
-BRIDGE_IMPL(sceKernelCreateMutex)
-BRIDGE_IMPL(sceKernelCreateRWLock)
-BRIDGE_IMPL(sceKernelCreateSema)
-BRIDGE_IMPL(sceKernelCreateSema_16XX)
-BRIDGE_IMPL(sceKernelCreateSimpleEvent)
-BRIDGE_IMPL(sceKernelCreateThread)
-BRIDGE_IMPL(sceKernelCreateTimer)
-BRIDGE_IMPL(sceKernelDeleteLwCond)
-BRIDGE_IMPL(sceKernelDeleteLwMutex)
-BRIDGE_IMPL(sceKernelExitProcess)
-BRIDGE_IMPL(sceKernelGetCallbackInfo)
-BRIDGE_IMPL(sceKernelGetCondInfo)
-BRIDGE_IMPL(sceKernelGetCurrentThreadVfpException)
-BRIDGE_IMPL(sceKernelGetEventFlagInfo)
-BRIDGE_IMPL(sceKernelGetEventInfo)
-BRIDGE_IMPL(sceKernelGetEventPattern)
-BRIDGE_IMPL(sceKernelGetLwCondInfo)
-BRIDGE_IMPL(sceKernelGetLwCondInfoById)
-BRIDGE_IMPL(sceKernelGetLwMutexInfo)
-BRIDGE_IMPL(sceKernelGetLwMutexInfoById)
-BRIDGE_IMPL(sceKernelGetModuleInfoByAddr)
-BRIDGE_IMPL(sceKernelGetMsgPipeInfo)
-BRIDGE_IMPL(sceKernelGetMutexInfo)
-BRIDGE_IMPL(sceKernelGetOpenPsId)
-BRIDGE_IMPL(sceKernelGetPMUSERENR)
-BRIDGE_IMPL(sceKernelGetProcessTime)
-BRIDGE_IMPL(sceKernelGetProcessTimeLow)
-BRIDGE_IMPL(sceKernelGetProcessTimeWide)
-BRIDGE_IMPL(sceKernelGetRWLockInfo)
-BRIDGE_IMPL(sceKernelGetSemaInfo)
-BRIDGE_IMPL(sceKernelGetSystemInfo)
-BRIDGE_IMPL(sceKernelGetSystemTime)
-BRIDGE_IMPL(sceKernelGetTLSAddr)
-BRIDGE_IMPL(sceKernelGetThreadContextForVM)
-BRIDGE_IMPL(sceKernelGetThreadCpuAffinityMask2)
-BRIDGE_IMPL(sceKernelGetThreadCurrentPriority)
-BRIDGE_IMPL(sceKernelGetThreadEventInfo)
-BRIDGE_IMPL(sceKernelGetThreadExitStatus)
-BRIDGE_IMPL(sceKernelGetThreadId)
-BRIDGE_IMPL(sceKernelGetThreadInfo)
-BRIDGE_IMPL(sceKernelGetThreadRunStatus)
-BRIDGE_IMPL(sceKernelGetTimerBase)
-BRIDGE_IMPL(sceKernelGetTimerEventRemainingTime)
-BRIDGE_IMPL(sceKernelGetTimerInfo)
-BRIDGE_IMPL(sceKernelGetTimerTime)
-BRIDGE_IMPL(sceKernelLoadModule)
-BRIDGE_IMPL(sceKernelLoadStartModule)
-BRIDGE_IMPL(sceKernelLockLwMutex)
-BRIDGE_IMPL(sceKernelLockLwMutex_0)
-BRIDGE_IMPL(sceKernelLockLwMutexCB)
-BRIDGE_IMPL(sceKernelLockMutex)
-BRIDGE_IMPL(sceKernelLockMutexCB)
-BRIDGE_IMPL(sceKernelLockReadRWLock)
-BRIDGE_IMPL(sceKernelLockReadRWLockCB)
-BRIDGE_IMPL(sceKernelLockWriteRWLock)
-BRIDGE_IMPL(sceKernelLockWriteRWLockCB)
-BRIDGE_IMPL(sceKernelOpenModule)
-BRIDGE_IMPL(sceKernelPMonThreadGetCounter)
-BRIDGE_IMPL(sceKernelPollEvent)
-BRIDGE_IMPL(sceKernelPollEventFlag)
-BRIDGE_IMPL(sceKernelPrintBacktrace)
-BRIDGE_IMPL(sceKernelPulseEventWithNotifyCallback)
-BRIDGE_IMPL(sceKernelReceiveMsgPipe)
-BRIDGE_IMPL(sceKernelReceiveMsgPipeCB)
-BRIDGE_IMPL(sceKernelReceiveMsgPipeVector)
-BRIDGE_IMPL(sceKernelReceiveMsgPipeVectorCB)
-BRIDGE_IMPL(sceKernelRegisterThreadEventHandler)
-BRIDGE_IMPL(sceKernelSendMsgPipe)
-BRIDGE_IMPL(sceKernelSendMsgPipeCB)
-BRIDGE_IMPL(sceKernelSendMsgPipeVector)
-BRIDGE_IMPL(sceKernelSendMsgPipeVectorCB)
-BRIDGE_IMPL(sceKernelSetEventWithNotifyCallback)
-BRIDGE_IMPL(sceKernelSetThreadContextForVM)
-BRIDGE_IMPL(sceKernelSetTimerEvent)
-BRIDGE_IMPL(sceKernelSetTimerTime)
-BRIDGE_IMPL(sceKernelSignalLwCond)
-BRIDGE_IMPL(sceKernelSignalLwCondAll)
-BRIDGE_IMPL(sceKernelSignalLwCondTo)
-BRIDGE_IMPL(sceKernelStackChkFail)
-BRIDGE_IMPL(sceKernelStartModule)
-BRIDGE_IMPL(sceKernelStartThread)
-BRIDGE_IMPL(sceKernelStopModule)
-BRIDGE_IMPL(sceKernelStopUnloadModule)
-BRIDGE_IMPL(sceKernelTryLockLwMutex)
-BRIDGE_IMPL(sceKernelTryReceiveMsgPipe)
-BRIDGE_IMPL(sceKernelTryReceiveMsgPipeVector)
-BRIDGE_IMPL(sceKernelTrySendMsgPipe)
-BRIDGE_IMPL(sceKernelTrySendMsgPipeVector)
-BRIDGE_IMPL(sceKernelUnloadModule)
-BRIDGE_IMPL(sceKernelUnlockLwMutex)
-BRIDGE_IMPL(sceKernelUnlockLwMutex_0)
-BRIDGE_IMPL(sceKernelUnlockLwMutex2)
-BRIDGE_IMPL(sceKernelWaitCond)
-BRIDGE_IMPL(sceKernelWaitCondCB)
-BRIDGE_IMPL(sceKernelWaitEvent)
-BRIDGE_IMPL(sceKernelWaitEventCB)
-BRIDGE_IMPL(sceKernelWaitEventFlag)
-BRIDGE_IMPL(sceKernelWaitEventFlagCB)
-BRIDGE_IMPL(sceKernelWaitException)
-BRIDGE_IMPL(sceKernelWaitExceptionCB)
-BRIDGE_IMPL(sceKernelWaitLwCond)
-BRIDGE_IMPL(sceKernelWaitLwCondCB)
-BRIDGE_IMPL(sceKernelWaitMultipleEvents)
-BRIDGE_IMPL(sceKernelWaitMultipleEventsCB)
-BRIDGE_IMPL(sceKernelWaitSema)
-BRIDGE_IMPL(sceKernelWaitSemaCB)
-BRIDGE_IMPL(sceKernelWaitSignal)
-BRIDGE_IMPL(sceKernelWaitSignalCB)
-BRIDGE_IMPL(sceKernelWaitThreadEnd)
-BRIDGE_IMPL(sceKernelWaitThreadEndCB)
-BRIDGE_IMPL(sceSblACMgrIsGameProgram)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Auth1)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Auth2)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Auth3)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Auth4)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Auth5)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160BroadCastDecrypt)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160BroadCastEncrypt)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160GetKeys)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Init)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160Shutdown)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160UniCastDecrypt)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB160UniCastEncrypt)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Auth1)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Auth2)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Auth3)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Auth4)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Auth5)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224GetKeys)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Init)
-BRIDGE_IMPL(sceSblGcAuthMgrAdhocBB224Shutdown)
-BRIDGE_IMPL(sceSblGcAuthMgrGetMediaIdType01)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBCipherFinal)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBCipherInit)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBCipherUpdate)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBMacFinal)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBMacInit)
-BRIDGE_IMPL(sceSblGcAuthMgrMsSaveBBMacUpdate)
-BRIDGE_IMPL(sceSblGcAuthMgrPcactActivation)
-BRIDGE_IMPL(sceSblGcAuthMgrPcactGetChallenge)
-BRIDGE_IMPL(sceSblGcAuthMgrPkgVry)
-BRIDGE_IMPL(sceSblGcAuthMgrPsmactCreateC1)
-BRIDGE_IMPL(sceSblGcAuthMgrPsmactVerifyR1)
-BRIDGE_IMPL(sceSblGcAuthMgrSclkGetData1)
-BRIDGE_IMPL(sceSblGcAuthMgrSclkSetData2)

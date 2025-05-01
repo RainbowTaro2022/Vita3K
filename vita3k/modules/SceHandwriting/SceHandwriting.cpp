@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceHandwriting.h"
+#include <module/module.h>
 
 EXPORT(int, sceHandwritingGetBufferSize) {
     return UNIMPLEMENTED();
@@ -60,15 +60,3 @@ EXPORT(int, sceHandwritingSetMode) {
 EXPORT(int, sceHandwritingTerm) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceHandwritingGetBufferSize)
-BRIDGE_IMPL(sceHandwritingInit)
-BRIDGE_IMPL(sceHandwritingRecognize)
-BRIDGE_IMPL(sceHandwritingRegisterDelete)
-BRIDGE_IMPL(sceHandwritingRegisterGetResult)
-BRIDGE_IMPL(sceHandwritingRegisterInfo)
-BRIDGE_IMPL(sceHandwritingRegisterInit)
-BRIDGE_IMPL(sceHandwritingRegisterSet)
-BRIDGE_IMPL(sceHandwritingRegisterTerm)
-BRIDGE_IMPL(sceHandwritingSetMode)
-BRIDGE_IMPL(sceHandwritingTerm)

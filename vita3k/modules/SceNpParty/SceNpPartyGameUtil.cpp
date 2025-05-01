@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNpPartyGameUtil.h"
+#include <module/module.h>
 
 EXPORT(int, sceNpPartyCheckCallback) {
     return UNIMPLEMENTED();
@@ -60,15 +60,3 @@ EXPORT(int, sceNpPartyRegisterHandler) {
 EXPORT(int, sceNpPartyTerm) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceNpPartyCheckCallback)
-BRIDGE_IMPL(sceNpPartyGetGameSessionReadyState)
-BRIDGE_IMPL(sceNpPartyGetId)
-BRIDGE_IMPL(sceNpPartyGetMemberInfo)
-BRIDGE_IMPL(sceNpPartyGetMemberSessionInfo)
-BRIDGE_IMPL(sceNpPartyGetMemberVoiceInfo)
-BRIDGE_IMPL(sceNpPartyGetMembers)
-BRIDGE_IMPL(sceNpPartyGetState)
-BRIDGE_IMPL(sceNpPartyInit)
-BRIDGE_IMPL(sceNpPartyRegisterHandler)
-BRIDGE_IMPL(sceNpPartyTerm)

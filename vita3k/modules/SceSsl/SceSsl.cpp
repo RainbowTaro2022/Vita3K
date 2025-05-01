@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceSsl.h"
+#include <module/module.h>
 
 #include <http/state.h>
 #include <openssl/ssl.h>
@@ -111,15 +111,3 @@ EXPORT(SceInt32, sceSslTerm) {
 
     return 0;
 }
-
-BRIDGE_IMPL(sceSslFreeSslCertName)
-BRIDGE_IMPL(sceSslGetIssuerName)
-BRIDGE_IMPL(sceSslGetMemoryPoolStats)
-BRIDGE_IMPL(sceSslGetNameEntryCount)
-BRIDGE_IMPL(sceSslGetNameEntryInfo)
-BRIDGE_IMPL(sceSslGetNotAfter)
-BRIDGE_IMPL(sceSslGetNotBefore)
-BRIDGE_IMPL(sceSslGetSerialNumber)
-BRIDGE_IMPL(sceSslGetSubjectName)
-BRIDGE_IMPL(sceSslInit)
-BRIDGE_IMPL(sceSslTerm)

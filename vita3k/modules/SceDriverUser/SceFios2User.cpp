@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,12 +15,23 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceFios2User.h"
+#include <module/module.h>
 
 #include "io/functions.h"
 
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceFios2User);
+
+enum SceFiosErrorCode {
+    SCE_FIOS_OK = 0
+};
+
+typedef SceUID SceFiosOverlayID;
+
+enum SceFiosOverlayResolveMode {
+    SCE_FIOS_OVERLAY_RESOLVE_FOR_READ = 0,
+    SCE_FIOS_OVERLAY_RESOLVE_FOR_WRITE = 1
+};
 
 template <>
 std::string to_debug_str<SceFiosOverlayResolveMode>(const MemState &mem, SceFiosOverlayResolveMode type) {
@@ -36,7 +47,7 @@ std::string to_debug_str<SceFiosOverlayResolveMode>(const MemState &mem, SceFios
 EXPORT(int, sceFiosOverlayAddForProcess02, SceUID processId, SceFiosProcessOverlay *pOverlay, SceFiosOverlayID *pOutID) {
     TRACY_FUNC(sceFiosOverlayAddForProcess02, processId, pOverlay, pOutID);
     if (pOverlay->type != SCE_FIOS_OVERLAY_TYPE_OPAQUE)
-        LOG_WARN("Using unimplemented overlay type {}.", pOverlay->type);
+        LOG_WARN("Using unimplemented overlay type {}.", fmt::underlying(pOverlay->type));
 
     *pOutID = create_overlay(emuenv.io, pOverlay);
 
@@ -77,7 +88,7 @@ EXPORT(int, sceFiosOverlayGetRecommendedScheduler02, int param1, const char *pat
     if (strlen(path) < strlen("host0:"))
         return 0;
 
-    return static_cast<int>(memcmp(path, "host", 4) == 0 && path[4] <= '9' && path[5] == ':');
+    return memcmp(path, "host", 4) == 0 && path[4] <= '9' && path[5] == ':';
 }
 
 EXPORT(int, sceFiosOverlayModifyForProcess02) {
@@ -97,7 +108,7 @@ EXPORT(int, sceFiosOverlayResolveSync02) {
 
 EXPORT(int, sceFiosOverlayResolveWithRangeSync02, SceUID processId, SceFiosOverlayResolveMode resolveFlag, const char *pInPath, char *pOutPath, SceUInt32 maxPath, SceUInt32 min_order, SceUInt32 max_order) {
     TRACY_FUNC(sceFiosOverlayResolveWithRangeSync02, processId, resolveFlag, pInPath, pOutPath, maxPath, min_order, max_order);
-    const std::string resolved = resolve_path(emuenv.io, pInPath, resolveFlag == SCE_FIOS_OVERLAY_RESOLVE_FOR_WRITE, min_order, max_order);
+    const std::string resolved = resolve_path(emuenv.io, pInPath, min_order, max_order);
     strncpy(pOutPath, resolved.c_str(), maxPath);
 
     return SCE_FIOS_OK;
@@ -112,14 +123,3 @@ EXPORT(int, sceFiosOverlayThreadSetDisabled02) {
     TRACY_FUNC(sceFiosOverlayThreadSetDisabled02);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceFiosOverlayAddForProcess02)
-BRIDGE_IMPL(sceFiosOverlayGetInfoForProcess02)
-BRIDGE_IMPL(sceFiosOverlayGetList02)
-BRIDGE_IMPL(sceFiosOverlayGetRecommendedScheduler02)
-BRIDGE_IMPL(sceFiosOverlayModifyForProcess02)
-BRIDGE_IMPL(sceFiosOverlayRemoveForProcess02)
-BRIDGE_IMPL(sceFiosOverlayResolveSync02)
-BRIDGE_IMPL(sceFiosOverlayResolveWithRangeSync02)
-BRIDGE_IMPL(sceFiosOverlayThreadIsDisabled02)
-BRIDGE_IMPL(sceFiosOverlayThreadSetDisabled02)

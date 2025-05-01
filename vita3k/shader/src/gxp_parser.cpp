@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,9 +17,13 @@
 
 #include <gxm/functions.h>
 #include <shader/gxp_parser.h>
-#include <shader/usse_program_analyzer.h>
+#include <shader/usse_types.h>
 #include <util/align.h>
 #include <util/log.h>
+
+#include <algorithm>
+#include <map>
+#include <tuple>
 
 namespace shader {
 
@@ -40,36 +44,32 @@ GenericType translate_generic_type(const gxp::GenericParameterType &type) {
 
 std::tuple<DataType, std::string> get_parameter_type_store_and_name(const SceGxmParameterType &type) {
     switch (type) {
-    case SCE_GXM_PARAMETER_TYPE_F32: {
+    case SCE_GXM_PARAMETER_TYPE_F32:
         return std::make_tuple(DataType::F32, "float");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_F16: {
+    case SCE_GXM_PARAMETER_TYPE_F16:
         return std::make_tuple(DataType::F16, "half");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_U16: {
+    case SCE_GXM_PARAMETER_TYPE_U16:
         return std::make_tuple(DataType::UINT16, "ushort");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_S16: {
+    case SCE_GXM_PARAMETER_TYPE_S16:
         return std::make_tuple(DataType::INT16, "ishort");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_U8: {
+    case SCE_GXM_PARAMETER_TYPE_U8:
         return std::make_tuple(DataType::UINT8, "uchar");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_S8: {
+    case SCE_GXM_PARAMETER_TYPE_S8:
         return std::make_tuple(DataType::INT8, "ichar");
-    }
 
-    case SCE_GXM_PARAMETER_TYPE_U32: {
+    case SCE_GXM_PARAMETER_TYPE_C10:
+        return std::make_tuple(DataType::C10, "fixed");
+
+    case SCE_GXM_PARAMETER_TYPE_U32:
         return std::make_tuple(DataType::UINT32, "uint");
-    }
-    case SCE_GXM_PARAMETER_TYPE_S32: {
+
+    case SCE_GXM_PARAMETER_TYPE_S32:
         return std::make_tuple(DataType::INT32, "int");
-    }
 
     default:
         return std::make_tuple(DataType::UNK, "unk");
@@ -80,8 +80,8 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
     ProgramInput program_input;
     std::map<int, UniformBuffer> uniform_buffers;
 
-    // TODO split these to functions (e.g. get_literals, get_paramters)
-    const SceGxmProgramParameter *const gxp_parameters = gxp::program_parameters(program);
+    // TODO split these to functions (e.g. get_literals, get_parameters)
+    auto gxp_parameters = program.program_parameters();
     auto vertex_varyings_ptr = program.vertex_varyings();
 
     std::uint32_t investigated_ub = 0;
@@ -108,8 +108,7 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
                 offset = container->base_sa_offset + parameter.resource_index;
             }
 
-            const auto parameter_type = gxp::parameter_type(parameter);
-            const auto [store_type, param_type_name] = shader::get_parameter_type_store_and_name(parameter_type);
+            const auto [store_type, param_type_name] = shader::get_parameter_type_store_and_name(parameter.type);
 
             // Make the type
             gxp::GenericParameterType param_type = gxp::parameter_generic_type(parameter);
@@ -145,7 +144,7 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
 
                 investigated_ub |= (1 << parameter.container_index);
 
-                if (uniform_buffers.find(parameter.container_index) == uniform_buffers.end()) {
+                if (!uniform_buffers.contains(parameter.container_index)) {
                     const std::uint32_t reg_block_size = container ? container->size_in_f32 : 0;
 
                     UniformBuffer buffer;
@@ -160,7 +159,7 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
                     buffer.size = std::max(parameter.resource_index + parameter_size_in_f32, buffer.size);
 
                     if (!container) {
-                        buffer.reg_start_offset = std::min(buffer.reg_start_offset, static_cast<uint32_t>(offset));
+                        buffer.reg_start_offset = std::min(buffer.reg_start_offset, offset);
                     }
                 }
 
@@ -188,7 +187,7 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
             break;
         }
         case SCE_GXM_PARAMETER_CATEGORY_UNIFORM_BUFFER: {
-            if (uniform_buffers.find(parameter.resource_index) == uniform_buffers.end()) {
+            if (!uniform_buffers.contains(parameter.resource_index)) {
                 UniformBuffer buffer;
                 buffer.index = parameter.resource_index;
                 buffer.reg_block_size = 0;
@@ -238,8 +237,7 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
         uniform_buffers.emplace(14, buffer);
     }
 
-    const auto buffer_infoes = reinterpret_cast<const SceGxmUniformBufferInfo *>(
-        reinterpret_cast<const std::uint8_t *>(&program.uniform_buffer_offset) + program.uniform_buffer_offset);
+    const auto buffer_infoes = program.uniform_buffer();
 
     const auto buffer_container = gxp::get_container_by_index(program, 19);
     const uint32_t base_offset = buffer_container ? buffer_container->base_sa_offset : 0;
@@ -248,30 +246,54 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
         const SceGxmUniformBufferInfo *buffer_info = &buffer_infoes[i];
         const uint32_t offset = base_offset + buffer_info->ldst_base_offset;
 
-        auto buffer = uniform_buffers.find(buffer_info->reside_buffer);
+        // handle literal and texture buffer here
+        if (buffer_info->reside_buffer >= SCE_GXM_REAL_MAX_UNIFORM_BUFFER) {
+            UniformBuffer buffer{
+                .index = buffer_info->reside_buffer,
+                .reg_start_offset = 0,
+                .reg_block_size = 0,
+                .rw = false
+            };
 
-        if (buffer == uniform_buffers.end() && buffer_info->reside_buffer == 16) {
-            // literals buffer address
-            // this is not implemented yet but at least we can use (if one exists) another buffer
-            // address instead so that we don't get garbage values / crash
-            LOG_WARN("Shader is using a literals buffer address, this is not supported yet");
-            // use a placeholder address
-            buffer = uniform_buffers.begin();
+            switch (buffer_info->reside_buffer) {
+            case SCE_GXM_TEXTURE_BUFFER:
+                LOG_INFO("Shader is using a texture buffer");
+                buffer.size = program.texture_buffer_count;
+                break;
+            case SCE_GXM_LITERAL_BUFFER:
+                LOG_INFO("Shader is using a literal buffer");
+                buffer.size = program.literal_buffer_count;
+                break;
+            case SCE_GXM_THREAD_BUFFER:
+                LOG_INFO("Shader is using a thread buffer");
+                buffer.size = program.thread_buffer_count;
+                break;
+            default:
+                LOG_ERROR("Shader is using an unkown buffer type {}", buffer_info->reside_buffer);
+                break;
+            }
+
+            if (buffer.size == 0)
+                continue;
+
+            program_input.uniform_buffers.push_back(buffer);
+            uniform_buffers.emplace(buffer_info->reside_buffer, buffer);
         }
+
+        auto buffer = uniform_buffers.find(buffer_info->reside_buffer);
 
         // buffer = null seems to happen when there's a leftover uniform buffer (uniform buffer that's not used in shader code)
         // This case needs more investigation
         if (buffer != uniform_buffers.end()) {
-            Input item;
-            item.type = DataType::UINT32;
-            item.offset = offset;
-            item.component_count = 1;
-            item.array_size = 1;
-
-            UniformBufferInputSource source;
-            source.base = buffer_info->ldst_base_value;
-            source.index = buffer->second.index;
-            item.source = source;
+            Input item{
+                .type = DataType::UINT32,
+                .offset = offset,
+                .component_count = 1,
+                .array_size = 1,
+                .source = UniformBufferInputSource{
+                    .base = static_cast<uint32_t>(buffer_info->ldst_base_value),
+                    .index = buffer->second.index }
+            };
 
             program_input.inputs.push_back(item);
         }
@@ -281,13 +303,12 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
 
     if (container) {
         // Create dependent sampler
-        const SceGxmDependentSampler *dependent_samplers = reinterpret_cast<const SceGxmDependentSampler *>(reinterpret_cast<const std::uint8_t *>(&program.dependent_sampler_offset)
-            + program.dependent_sampler_offset);
+        auto dependent_samplers = program.dependent_sampler();
 
         for (std::uint32_t i = 0; i < program.dependent_sampler_count; i++) {
             const std::uint32_t rsc_index = dependent_samplers[i].resource_index_layout_offset / 4;
 
-            const auto sampler = std::find_if(program_input.samplers.begin(), program_input.samplers.end(), [=](auto x) { return x.index == rsc_index; });
+            const auto sampler = std::find_if(program_input.samplers.begin(), program_input.samplers.end(), [=](const auto &x) { return x.index == rsc_index; });
 
             Input item;
             item.type = DataType::UINT32;
@@ -310,14 +331,14 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
             }
 
             source.index = rsc_index;
+            source.layout_position = dependent_samplers[i].resource_index_layout_offset % 4;
             item.source = source;
 
             program_input.inputs.push_back(item);
         }
     }
 
-    const std::uint32_t *literals = reinterpret_cast<const std::uint32_t *>(reinterpret_cast<const std::uint8_t *>(&program.literals_offset)
-        + program.literals_offset);
+    auto literals = program.literals();
 
     // Get base SA offset for literal
     // The container index of those literals are 16
@@ -328,18 +349,15 @@ ProgramInput get_program_input(const SceGxmProgram &program) {
         container = gxp::get_container_by_index(program, 19);
     }
     if (container) {
-        for (std::uint32_t i = 0; i < program.literals_count * 2; i += 2) {
-            auto literal_offset = container->base_sa_offset + literals[i];
-            auto literal_data = *reinterpret_cast<const float *>(&literals[i + 1]);
-
+        for (std::uint32_t i = 0; i < program.literals_count; ++i) {
             LiteralInputSource source;
-            source.data = literal_data;
+            source.data = literals[i].data;
 
             Input item;
             item.component_count = 1;
             item.type = DataType::F32;
             item.bank = RegisterBank::SECATTR;
-            item.offset = literal_offset;
+            item.offset = container->base_sa_offset + literals[i].offset;
             item.array_size = 1;
             item.generic_type = GenericType::SCALER;
             item.source = source;

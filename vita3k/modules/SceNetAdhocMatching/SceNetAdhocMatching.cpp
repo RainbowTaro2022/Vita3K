@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNetAdhocMatching.h"
+#include <module/module.h>
 
 EXPORT(int, sceNetAdhocMatchingAbortSendData) {
     return UNIMPLEMENTED();
@@ -72,18 +72,3 @@ EXPORT(int, sceNetAdhocMatchingStop) {
 EXPORT(int, sceNetAdhocMatchingTerm) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceNetAdhocMatchingAbortSendData)
-BRIDGE_IMPL(sceNetAdhocMatchingCancelTarget)
-BRIDGE_IMPL(sceNetAdhocMatchingCancelTargetWithOpt)
-BRIDGE_IMPL(sceNetAdhocMatchingCreate)
-BRIDGE_IMPL(sceNetAdhocMatchingDelete)
-BRIDGE_IMPL(sceNetAdhocMatchingGetHelloOpt)
-BRIDGE_IMPL(sceNetAdhocMatchingGetMembers)
-BRIDGE_IMPL(sceNetAdhocMatchingInit)
-BRIDGE_IMPL(sceNetAdhocMatchingSelectTarget)
-BRIDGE_IMPL(sceNetAdhocMatchingSendData)
-BRIDGE_IMPL(sceNetAdhocMatchingSetHelloOpt)
-BRIDGE_IMPL(sceNetAdhocMatchingStart)
-BRIDGE_IMPL(sceNetAdhocMatchingStop)
-BRIDGE_IMPL(sceNetAdhocMatchingTerm)

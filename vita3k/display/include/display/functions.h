@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,13 +17,17 @@
 
 #pragma once
 
+#include <kernel/thread/thread_state.h>
+
 #include <cstdint>
-#include <kernel/callback.h>
-#include <util/types.h>
 
 struct DisplayState;
 struct KernelState;
 struct EmuEnvState;
+struct DisplayFrameInfo;
 
 void start_sync_thread(EmuEnvState &emuenv);
 void wait_vblank(DisplayState &display, KernelState &kernel, const ThreadStatePtr &wait_thread, const uint64_t target_vcount, const bool is_cb);
+// if the result is not nullptr, contain the predicted frame (pointer needs to be freed later)
+DisplayFrameInfo *predict_next_image(EmuEnvState &emuenv, Address sync_object);
+void update_prediction(EmuEnvState &emuenv, DisplayFrameInfo &frame);

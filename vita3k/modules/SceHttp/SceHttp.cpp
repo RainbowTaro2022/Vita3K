@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,13 +15,13 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceHttp.h"
+#include <module/module.h>
 
 #include <cstring>
 #include <filesystem>
 #include <http/state.h>
 
-#ifdef WIN32 // windows moment
+#ifdef _WIN32 // windows moment
 #include <io.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -36,7 +36,6 @@
 #include <net/state.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#include <util/lock_and_find.h>
 #include <util/log.h>
 #include <util/net_utils.h>
 #include <util/string_utils.h>
@@ -148,7 +147,7 @@ EXPORT(SceInt, sceHttpAddRequestHeader, SceInt reqId, const char *name, const ch
     if (mode == SCE_HTTP_HEADER_OVERWRITE && !name)
         return RET_ERROR(SCE_HTTP_ERROR_NOT_FOUND);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!name || !value)
@@ -165,14 +164,12 @@ EXPORT(SceInt, sceHttpAddRequestHeader, SceInt reqId, const char *name, const ch
             // entry doesn't exists, we can insert it
             req.headers.insert({ name, value });
         }
-    } else if (mode == SCE_HTTP_HEADER_ADD) {
-        if (req.headers.find(name) != req.headers.end())
+    } else { // mode == SCE_HTTP_HEADER_ADD
+        if (req.headers.contains(name))
             return RET_ERROR(SCE_HTTP_ERROR_INVALID_VALUE);
 
         req.headers.insert({ name, value });
-    } else
-        return RET_ERROR(SCE_HTTP_ERROR_INVALID_VALUE);
-
+    }
     return 0;
 }
 
@@ -206,7 +203,7 @@ EXPORT(SceInt, sceHttpCreateConnectionWithURL, SceInt tmplId, const char *url, S
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!url)
@@ -267,7 +264,7 @@ EXPORT(SceInt, sceHttpCreateConnectionWithURL, SceInt tmplId, const char *url, S
     };
     addrinfo *result = { 0 };
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
 
     auto ret = getaddrinfo(parsed.hostname.c_str(), port.c_str(), &hints, &result);
     if (ret < 0) {
@@ -345,7 +342,7 @@ EXPORT(SceInt, sceHttpCreateConnection, SceInt tmplId, const char *hostname, con
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!scheme)
@@ -378,7 +375,7 @@ EXPORT(SceInt, sceHttpCreateRequestWithURL, SceInt connId, SceHttpMethods method
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.connections.find(connId) == emuenv.http.connections.end())
+    if (!emuenv.http.connections.contains(connId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (method >= SCE_HTTP_METHOD_INVALID || method < 0)
@@ -431,11 +428,11 @@ EXPORT(SceInt, sceHttpCreateRequestWithURL, SceInt connId, SceHttpMethods method
     req.url = urlStr;
     req.contentLength = contentLength;
 
-    req.headers.insert({ "Host", parsed.hostname });
-    req.headers.insert({ "User-Agent", tmpl->second.userAgent });
+    req.headers.emplace("Host", parsed.hostname);
+    req.headers.emplace("User-Agent", tmpl->second.userAgent);
 
     if (tmpl->second.httpVersion == SCE_HTTP_VERSION_1_1 && conn->second.keepAlive)
-        req.headers.insert({ "Connection", "Keep-Alive" });
+        req.headers.emplace("Connection", "Keep-Alive");
 
     std::string methodStr;
     switch (method) {
@@ -479,7 +476,7 @@ EXPORT(SceInt, sceHttpCreateRequest, SceInt connId, SceHttpMethods method, const
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.connections.find(connId) == emuenv.http.connections.end())
+    if (!emuenv.http.connections.contains(connId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (method >= SCE_HTTP_METHOD_INVALID || method < 0)
@@ -498,7 +495,7 @@ EXPORT(SceInt, sceHttpCreateRequest2, SceInt connId, const char *method, const c
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.connections.find(connId) == emuenv.http.connections.end())
+    if (!emuenv.http.connections.contains(connId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!path)
@@ -517,7 +514,7 @@ EXPORT(SceInt, sceHttpCreateRequestWithURL2, SceInt connId, const char *method, 
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.connections.find(connId) == emuenv.http.connections.end())
+    if (!emuenv.http.connections.contains(connId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!path)
@@ -549,7 +546,7 @@ EXPORT(SceInt, sceHttpCreateTemplate, const char *userAgent, SceHttpVersion http
     else
         ssl_ctx = SSL_CTX_new(TLS_method());
 
-    SSL_set_mode((SSL *)ssl_ctx, SSL_MODE_AUTO_RETRY);
+    SSL_CTX_set_mode((SSL_CTX *)ssl_ctx, SSL_MODE_AUTO_RETRY);
 
     auto ssl = SSL_new((SSL_CTX *)ssl_ctx);
 
@@ -567,11 +564,11 @@ EXPORT(SceInt, sceHttpDeleteConnection, SceInt connId) {
 
     if (connIt == emuenv.http.connections.end())
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
-#ifdef WIN32
+#ifdef _WIN32
     closesocket(connIt->second.sockfd);
 #else
     close(connIt->second.sockfd);
-#endif // WIN32
+#endif // _WIN32
 
     emuenv.http.connections.erase(connIt);
 
@@ -583,13 +580,12 @@ EXPORT(SceInt, sceHttpDeleteRequest, SceInt reqId) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    auto it = emuenv.http.requests.find(reqId);
+    if (it == emuenv.http.requests.end())
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
-    auto it = emuenv.http.requests.find(reqId);
-    if (it->second.res.responseRaw)
-        delete[] it->second.res.responseRaw;
-    for (auto &pointer : it->second.guestPointers) {
+    delete[] it->second.res.responseRaw;
+    for (auto pointer : it->second.guestPointers) {
         free(emuenv.mem, pointer.address());
     }
     emuenv.http.requests.erase(it);
@@ -602,7 +598,7 @@ EXPORT(SceInt, sceHttpDeleteTemplate, SceInt tmplId) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto it = emuenv.http.templates.find(tmplId);
@@ -629,7 +625,7 @@ EXPORT(SceInt, sceHttpGetAllResponseHeaders, SceInt reqId, Ptr<char> *header, Sc
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -639,7 +635,7 @@ EXPORT(SceInt, sceHttpGetAllResponseHeaders, SceInt reqId, Ptr<char> *header, Sc
     // is alloc name ok?
     auto h = Ptr<char>(alloc(emuenv.mem, headers.length() + 1, "header")); // Allocate on guest mem
     memcpy(h.get(emuenv.mem), headers.data(), headers.length() + 1); // Put header data on guest mem
-    req->second.guestPointers.push_back(h); // Save the pointer to free it later
+    req->second.guestPointers.emplace_back(h); // Save the pointer to free it later
     *header = h; // make header point to the guest address where headers are located
 
     *headerSize = headers.length() + 1;
@@ -692,10 +688,10 @@ EXPORT(SceInt, sceHttpGetLastErrno, SceInt reqId, SceInt *errNum) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
-    *errNum = (int)errno;
+    *errNum = errno;
 
     return 0;
 }
@@ -724,7 +720,7 @@ EXPORT(SceInt, sceHttpGetResponseContentLength, SceInt reqId, SceULong64 *conten
     if (!contentLength)
         return RET_ERROR(SCE_HTTP_ERROR_NO_CONTENT_LENGTH);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -750,7 +746,7 @@ EXPORT(SceInt, sceHttpGetStatusCode, SceInt reqId, SceInt *statusCode) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -803,7 +799,7 @@ EXPORT(SceInt, sceHttpParseResponseHeader, Ptr<const char> headers, SceSize head
     // is alloc name ok?
     auto h = Ptr<char>(alloc(emuenv.mem, foundIt->second.length() + 1, "fieldValue")); // Allocate on guest mem
     memcpy(h.get(emuenv.mem), foundIt->second.data(), foundIt->second.length() + 1); // Put header data on guest mem
-    emuenv.http.guestPointers.push_back(h); // Save the pointer to free it later
+    emuenv.http.guestPointers.emplace_back(h); // Save the pointer to free it later
     *fieldValue = h; // make header point to the guest address where headers are located
 
     *valueLen = foundIt->second.length() + 1;
@@ -841,7 +837,7 @@ EXPORT(SceInt, sceHttpParseStatusLine, const char *statusLine, SceSize lineLen, 
     if (!net_utils::parseStatusLine(cleanLine, version, code, reason))
         return RET_ERROR(SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE);
 
-    *httpMajorVer = string_utils::stoi_def(version.substr(0, version.find("."))); // we know this wont fail because parseStatusLine returned true :)
+    *httpMajorVer = string_utils::stoi_def(version.substr(0, version.find('.'))); // we know this wont fail because parseStatusLine returned true :)
     if (version.find('.') != std::string::npos) {
         auto minorVer = version.substr(version.find('.') + 1);
         *httpMinorVer = string_utils::stoi_def(minorVer);
@@ -854,7 +850,7 @@ EXPORT(SceInt, sceHttpParseStatusLine, const char *statusLine, SceSize lineLen, 
 
     auto h = Ptr<char>(alloc(emuenv.mem, sizeof(char), "reasonPhrase"));
     memcpy(h.get(emuenv.mem), reason.data(), reason.length() + 1);
-    emuenv.http.guestPointers.push_back(h);
+    emuenv.http.guestPointers.emplace_back(h);
     *reasonPhrase = h;
 
     *phraseLen = reason.length() + 1;
@@ -867,7 +863,7 @@ EXPORT(SceInt, sceHttpReadData, SceInt reqId, void *data, SceSize size) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -908,12 +904,12 @@ EXPORT(SceInt, sceHttpRemoveRequestHeader, SceInt reqId, const char *name) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
 
-    if (req->second.headers.find(name) != req->second.headers.end())
+    if (req->second.headers.contains(name))
         req->second.headers.erase(name);
 
     return 0;
@@ -924,7 +920,7 @@ EXPORT(SceInt, sceHttpRequestGetAllHeaders, SceInt reqId, Ptr<char> *header, Sce
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -933,7 +929,7 @@ EXPORT(SceInt, sceHttpRequestGetAllHeaders, SceInt reqId, Ptr<char> *header, Sce
 
     auto h = Ptr<char>(alloc(emuenv.mem, sizeof(char), "headers"));
     memcpy(h.get(emuenv.mem), headers.data(), headers.length() + 1);
-    req->second.guestPointers.push_back(h);
+    req->second.guestPointers.emplace_back(h);
     *header = h;
 
     *headerSize = headers.length() + 1;
@@ -946,7 +942,7 @@ EXPORT(SceInt, sceHttpSendRequest, SceInt reqId, const char *postData, SceSize s
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -976,7 +972,7 @@ EXPORT(SceInt, sceHttpSendRequest, SceInt reqId, const char *postData, SceSize s
      */
 
     if (req->second.method == SCE_HTTP_METHOD_POST || req->second.method == SCE_HTTP_METHOD_PUT) {
-        if (req->second.headers.find("Content-Length") != req->second.headers.end()) {
+        if (req->second.headers.contains("Content-Length")) {
             // There is a content length header, probably by the game, use it
             auto contHeader = req->second.headers.find("Content-Length");
             SceSize contLen = string_utils::stoi_def(contHeader->second);
@@ -1132,9 +1128,9 @@ EXPORT(SceInt, sceHttpSendRequest, SceInt reqId, const char *postData, SceSize s
 
     // Now we get the body or the rest of the body
     attempts = 1; // Reset attempts
-    const int responseLength = resHeadersStr.find("\r\n\r\n") + strlen("\r\n\r\n") + req->second.res.contentLength;
+    int responseLength = resHeadersStr.find("\r\n\r\n") + strlen("\r\n\r\n") + req->second.res.contentLength;
     if (req->second.method == SCE_HTTP_METHOD_HEAD || req->second.method == SCE_HTTP_METHOD_OPTIONS) // even if we have content-length, there will be no body
-        const int responseLength = resHeadersStr.find("\r\n\r\n") + strlen("\r\n\r\n");
+        responseLength = resHeadersStr.find("\r\n\r\n") + strlen("\r\n\r\n");
 
     // This is the entire response, including headers and everything
     auto reqResponse = new uint8_t[responseLength]();
@@ -1311,7 +1307,7 @@ EXPORT(SceInt, sceHttpSetRequestContentLength, SceInt reqId, SceULong64 contentL
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto req = emuenv.http.requests.find(reqId);
@@ -1336,7 +1332,7 @@ EXPORT(SceInt, sceHttpSetResponseHeaderMaxSize, SceInt reqId, SceSize headerSize
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.requests.find(reqId) == emuenv.http.requests.end())
+    if (!emuenv.http.requests.contains(reqId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (headerSize > SCE_HTTP_DEFAULT_RESPONSE_HEADER_MAX)
@@ -1557,7 +1553,7 @@ EXPORT(SceInt, sceHttpsDisableOption2, SceInt tmplId, SceHttpsFlags sslFlags) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto tmpl = emuenv.http.templates.find(tmplId);
@@ -1581,7 +1577,7 @@ EXPORT(SceInt, sceHttpsEnableOption2, SceInt tmplId, SceHttpsFlags sslFlags) {
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     auto tmpl = emuenv.http.templates.find(tmplId);
@@ -1627,7 +1623,7 @@ EXPORT(SceInt, sceHttpsGetSslError, SceInt tmplId, SceInt *errNum, SceUInt *deta
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     return UNIMPLEMENTED();
@@ -1643,7 +1639,7 @@ EXPORT(SceInt, sceHttpsSetSslCallback, SceInt tmplId, SceHttpsCallback cbFunctio
     if (!emuenv.http.inited)
         return RET_ERROR(SCE_HTTP_ERROR_BEFORE_INIT);
 
-    if (emuenv.http.templates.find(tmplId) == emuenv.http.templates.end())
+    if (!emuenv.http.templates.contains(tmplId))
         return RET_ERROR(SCE_HTTP_ERROR_INVALID_ID);
 
     if (!cbFunction)
@@ -1656,97 +1652,3 @@ EXPORT(int, sceHttpsUnloadCert) {
     TRACY_FUNC(sceHttpsUnloadCert);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceHttpAbortRequest)
-BRIDGE_IMPL(sceHttpAbortRequestForce)
-BRIDGE_IMPL(sceHttpAbortWaitRequest)
-BRIDGE_IMPL(sceHttpAddCookie)
-BRIDGE_IMPL(sceHttpAddRequestHeader)
-BRIDGE_IMPL(sceHttpAddRequestHeaderRaw)
-BRIDGE_IMPL(sceHttpAuthCacheFlush)
-BRIDGE_IMPL(sceHttpCookieExport)
-BRIDGE_IMPL(sceHttpCookieFlush)
-BRIDGE_IMPL(sceHttpCookieImport)
-BRIDGE_IMPL(sceHttpCreateConnection)
-BRIDGE_IMPL(sceHttpCreateConnectionWithURL)
-BRIDGE_IMPL(sceHttpCreateEpoll)
-BRIDGE_IMPL(sceHttpCreateRequest)
-BRIDGE_IMPL(sceHttpCreateRequest2)
-BRIDGE_IMPL(sceHttpCreateRequestWithURL)
-BRIDGE_IMPL(sceHttpCreateRequestWithURL2)
-BRIDGE_IMPL(sceHttpCreateTemplate)
-BRIDGE_IMPL(sceHttpDeleteConnection)
-BRIDGE_IMPL(sceHttpDeleteRequest)
-BRIDGE_IMPL(sceHttpDeleteTemplate)
-BRIDGE_IMPL(sceHttpDestroyEpoll)
-BRIDGE_IMPL(sceHttpGetAcceptEncodingGZIPEnabled)
-BRIDGE_IMPL(sceHttpGetAllResponseHeaders)
-BRIDGE_IMPL(sceHttpGetAuthEnabled)
-BRIDGE_IMPL(sceHttpGetAutoRedirect)
-BRIDGE_IMPL(sceHttpGetCookie)
-BRIDGE_IMPL(sceHttpGetCookieEnabled)
-BRIDGE_IMPL(sceHttpGetCookieStats)
-BRIDGE_IMPL(sceHttpGetEpoll)
-BRIDGE_IMPL(sceHttpGetEpollId)
-BRIDGE_IMPL(sceHttpGetIcmOption)
-BRIDGE_IMPL(sceHttpGetLastErrno)
-BRIDGE_IMPL(sceHttpGetMemoryPoolStats)
-BRIDGE_IMPL(sceHttpGetNonblock)
-BRIDGE_IMPL(sceHttpGetResponseContentLength)
-BRIDGE_IMPL(sceHttpGetStatusCode)
-BRIDGE_IMPL(sceHttpInit)
-BRIDGE_IMPL(sceHttpParseResponseHeader)
-BRIDGE_IMPL(sceHttpParseStatusLine)
-BRIDGE_IMPL(sceHttpReadData)
-BRIDGE_IMPL(sceHttpRedirectCacheFlush)
-BRIDGE_IMPL(sceHttpRemoveRequestHeader)
-BRIDGE_IMPL(sceHttpRequestGetAllHeaders)
-BRIDGE_IMPL(sceHttpSendRequest)
-BRIDGE_IMPL(sceHttpSetAcceptEncodingGZIPEnabled)
-BRIDGE_IMPL(sceHttpSetAuthEnabled)
-BRIDGE_IMPL(sceHttpSetAuthInfoCallback)
-BRIDGE_IMPL(sceHttpSetAutoRedirect)
-BRIDGE_IMPL(sceHttpSetConnectTimeOut)
-BRIDGE_IMPL(sceHttpSetCookieEnabled)
-BRIDGE_IMPL(sceHttpSetCookieMaxNum)
-BRIDGE_IMPL(sceHttpSetCookieMaxNumPerDomain)
-BRIDGE_IMPL(sceHttpSetCookieMaxSize)
-BRIDGE_IMPL(sceHttpSetCookieRecvCallback)
-BRIDGE_IMPL(sceHttpSetCookieSendCallback)
-BRIDGE_IMPL(sceHttpSetCookieTotalMaxSize)
-BRIDGE_IMPL(sceHttpSetDefaultAcceptEncodingGZIPEnabled)
-BRIDGE_IMPL(sceHttpSetEpoll)
-BRIDGE_IMPL(sceHttpSetEpollId)
-BRIDGE_IMPL(sceHttpSetIcmOption)
-BRIDGE_IMPL(sceHttpSetInflateGZIPEnabled)
-BRIDGE_IMPL(sceHttpSetNonblock)
-BRIDGE_IMPL(sceHttpSetRecvTimeOut)
-BRIDGE_IMPL(sceHttpSetRedirectCallback)
-BRIDGE_IMPL(sceHttpSetRequestContentLength)
-BRIDGE_IMPL(sceHttpSetResolveRetry)
-BRIDGE_IMPL(sceHttpSetResolveTimeOut)
-BRIDGE_IMPL(sceHttpSetResponseHeaderMaxSize)
-BRIDGE_IMPL(sceHttpSetSendTimeOut)
-BRIDGE_IMPL(sceHttpSslIsCtxCreated)
-BRIDGE_IMPL(sceHttpTerm)
-BRIDGE_IMPL(sceHttpUnsetEpoll)
-BRIDGE_IMPL(sceHttpUriBuild)
-BRIDGE_IMPL(sceHttpUriEscape)
-BRIDGE_IMPL(sceHttpUriMerge)
-BRIDGE_IMPL(sceHttpUriParse)
-BRIDGE_IMPL(sceHttpUriSweepPath)
-BRIDGE_IMPL(sceHttpUriUnescape)
-BRIDGE_IMPL(sceHttpWaitRequest)
-BRIDGE_IMPL(sceHttpWaitRequestCB)
-BRIDGE_IMPL(sceHttpsDisableOption)
-BRIDGE_IMPL(sceHttpsDisableOption2)
-BRIDGE_IMPL(sceHttpsDisableOptionPrivate)
-BRIDGE_IMPL(sceHttpsEnableOption)
-BRIDGE_IMPL(sceHttpsEnableOption2)
-BRIDGE_IMPL(sceHttpsEnableOptionPrivate)
-BRIDGE_IMPL(sceHttpsFreeCaList)
-BRIDGE_IMPL(sceHttpsGetCaList)
-BRIDGE_IMPL(sceHttpsGetSslError)
-BRIDGE_IMPL(sceHttpsLoadCert)
-BRIDGE_IMPL(sceHttpsSetSslCallback)
-BRIDGE_IMPL(sceHttpsUnloadCert)

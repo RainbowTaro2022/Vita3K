@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,11 +15,11 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <gxm/functions.h>
+#include <gxm/types.h>
 #include <util/log.h>
 
 namespace gxm {
-size_t attribute_format_size(SceGxmAttributeFormat format) {
+uint32_t attribute_format_size(SceGxmAttributeFormat format) {
     switch (format) {
     case SCE_GXM_ATTRIBUTE_FORMAT_U8:
     case SCE_GXM_ATTRIBUTE_FORMAT_U8N:
@@ -37,12 +37,9 @@ size_t attribute_format_size(SceGxmAttributeFormat format) {
     case SCE_GXM_ATTRIBUTE_FORMAT_UNTYPED:
         return 4;
     default:
-        LOG_ERROR("Unsupported attribute format 0x{:0X}", format);
+        LOG_ERROR("Unsupported attribute format 0x{:0X}", fmt::underlying(format));
         return 4;
     }
 }
 
-size_t index_element_size(SceGxmIndexFormat format) {
-    return (format == SCE_GXM_INDEX_FORMAT_U16) ? 2 : 4;
-}
 } // namespace gxm

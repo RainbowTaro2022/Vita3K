@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,17 +18,13 @@
 #pragma once
 
 #include <config/state.h>
-#include <crypto/hash.h>
 #include <glutil/object.h>
 #include <gxm/types.h>
 
 #include <renderer/gl/state.h>
 #include <renderer/gl/types.h>
 
-#include <map>
 #include <memory>
-#include <string>
-#include <tuple>
 
 struct MemState;
 struct FeatureState;
@@ -36,13 +32,13 @@ struct FeatureState;
 namespace renderer::gl {
 
 // Compile program.
-SharedGLObject compile_program(GLState &renderer, GLContext &context, const GxmRecordState &state, const FeatureState &features, const MemState &mem, bool shader_cache, bool spirv, bool maskupdate, const char *base_path, const char *title_id, const char *self_name);
-void pre_compile_program(GLState &renderer, const char *base_path, const char *title_id, const char *self_name, const ShadersHash &hashs);
+SharedGLObject compile_program(GLState &renderer, GLContext &context, const GxmRecordState &state, const FeatureState &features, const MemState &mem, bool shader_cache, bool spirv, bool maskupdate);
+void pre_compile_program(GLState &renderer, const ShadersHash &hashs);
 
 // Uniforms.
 bool set_uniform_buffer(GLContext &context, const ShaderProgram *program, const bool vertex_shader, const int block_num, const int size, const uint8_t *data);
 
-bool create(SDL_Window *window, std::unique_ptr<renderer::State> &state, const char *base_path, const bool hashless_texture_cache);
+bool create(SDL_Window *window, std::unique_ptr<renderer::State> &state, const Config &config);
 bool create(std::unique_ptr<Context> &context);
 bool create(GLState &state, std::unique_ptr<RenderTarget> &rt, const SceGxmRenderTargetParams &params, const FeatureState &features);
 bool create(std::unique_ptr<FragmentProgram> &fp, GLState &state, const SceGxmProgram &program, const SceGxmBlendInfo *blend);
@@ -51,7 +47,7 @@ void set_context(GLState &state, GLContext &ctx, const MemState &mem, const GLRe
 void get_surface_data(GLState &renderer, GLContext &context, uint32_t *pixels, SceGxmColorSurface &surface);
 void lookup_and_get_surface_data(GLState &renderer, MemState &mem, SceGxmColorSurface &surface);
 void draw(GLState &renderer, GLContext &context, const FeatureState &features, SceGxmPrimitiveType type, SceGxmIndexFormat format,
-    void *indices, size_t count, uint32_t instance_count, MemState &mem, const char *base_path, const char *title_id, const char *self_name, const Config &config);
+    void *indices, size_t count, uint32_t instance_count, MemState &mem, const Config &config);
 
 // State
 void sync_viewport_flat(const GLState &state, GLContext &context);
@@ -67,29 +63,24 @@ void sync_stencil_data(const renderer::GxmRecordState &state, const MemState &me
 void sync_stencil_func(const GxmStencilStateOp &state_op, const GxmStencilStateValues &state_vals, const MemState &mem, const bool is_back_stencil);
 void sync_mask(const GLState &state, GLContext &context, const MemState &mem);
 void sync_polygon_mode(const SceGxmPolygonMode mode, const bool front);
-void sync_point_line_width(const std::uint32_t size, const bool front);
+void sync_point_line_width(const GLState &state, const std::uint32_t size, const bool front);
 void sync_depth_bias(const int factor, const int unit, const bool front);
 void sync_blending(const GxmRecordState &state, const MemState &mem);
-void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config,
-    const std::string &base_path, const std::string &title_id);
+void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config);
 void sync_vertex_streams_and_attributes(GLContext &context, GxmRecordState &state, const MemState &mem);
 void bind_fundamental(GLContext &context);
 void clear_previous_uniform_storage(GLContext &context);
 
 struct GLTextureCacheState;
-struct TextureCacheState;
 
 // Attribute formats.
 GLenum attribute_format_to_gl_type(SceGxmAttributeFormat format);
-GLboolean attribute_format_normalised(SceGxmAttributeFormat format);
+GLboolean attribute_format_normalized(SceGxmAttributeFormat format);
 
 namespace texture {
 
 // Textures.
-void bind_texture(GLTextureCacheState &cache, const SceGxmTexture &gxm_texture, const MemState &mem);
-void configure_bound_texture(const renderer::TextureCacheState &state, const SceGxmTexture &gxm_texture);
-void upload_bound_texture(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height,
-    uint32_t mip_index, const void *pixels, int face, bool is_compressed, size_t pixels_per_stride);
+void bind_texture_without_cache(GLTextureCache &cache, const SceGxmTexture &gxm_texture, MemState &mem);
 
 // Texture formats.
 const GLint *translate_swizzle(SceGxmTextureFormat fmt);
@@ -103,7 +94,6 @@ size_t bits_per_pixel(SceGxmTextureBaseFormat base_format);
 
 // Texture cache.
 bool init(GLTextureCacheState &cache, const bool hashless_texture_cache);
-void dump(const SceGxmTexture &gxm_texture, const MemState &mem, const std::string &name, const std::string &base_path, const std::string &title_id, Sha256Hash hash);
 
 } // namespace texture
 

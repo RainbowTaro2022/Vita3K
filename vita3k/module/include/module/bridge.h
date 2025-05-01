@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,20 +18,19 @@
 #pragma once
 
 #ifdef TRACY_ENABLE
-#include "public/tracy/Tracy.hpp"
+#include <tracy/Tracy.hpp>
 #endif
 
 #include "lay_out_args.h"
 #include "read_arg.h"
-#include "vargs.h"
 #include "write_return_value.h"
 
-#include <config/functions.h>
 #include <config/state.h>
 #include <emuenv/state.h>
 
 using ImportFn = std::function<void(EmuEnvState &emuenv, CPUState &cpu, SceUID thread_id)>;
 using ImportVarFactory = std::function<Address(EmuEnvState &emuenv)>;
+using LibraryInitFn = std::function<void(EmuEnvState &emuenv)>;
 
 // Function returns a value that is written to CPU registers.
 template <typename Ret, typename... Args, size_t... indices>
@@ -52,8 +51,7 @@ ImportFn bridge(Ret (*export_fn)(EmuEnvState &, SceUID, const char *, Args...), 
 
     return [export_fn, export_name, args_layout](EmuEnvState &emuenv, CPUState &cpu, SceUID thread_id) {
 #ifdef TRACY_ENABLE
-        ZoneNamed(___tracy_scoped_zone, emuenv.cfg.tracy_primitive_impl); // Tracy - Track function scope
-        ZoneColorV(___tracy_scoped_zone, 0xFFF34C); // Tracy - Change color to yellow
+        ZoneNamedC(___tracy_scoped_zone, 0xFFF34C, emuenv.cfg.tracy_primitive_impl); // Tracy - Track function scope and set color to yellow
         ZoneNameV(___tracy_scoped_zone, export_name, strlen(export_name)); // Tracy - Edit scope name based on export_name
 #endif
 

@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,59 +17,22 @@
 
 #include <renderer/functions.h>
 #include <renderer/profile.h>
-#include <renderer/pvrt-dec.h>
 
 #include <renderer/gl/functions.h>
 #include <renderer/gl/types.h>
 
 #include <gxm/functions.h>
-#include <mem/ptr.h>
-#include <util/align.h>
-#include <util/log.h>
-
-#include <stb_image_write.h>
-
-static constexpr bool log_parameter = false;
 
 namespace renderer::gl {
-namespace texture {
-GLenum get_gl_texture_type(const SceGxmTexture &gxm_texture) {
-    const std::uint32_t type = gxm_texture.texture_type();
-    return ((type == SCE_GXM_TEXTURE_CUBE) || (type == SCE_GXM_TEXTURE_CUBE_ARBITRARY)) ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
-}
 
-void bind_texture(GLTextureCacheState &cache, const SceGxmTexture &gxm_texture, const MemState &mem) {
-    R_PROFILE(__func__);
-    glBindTexture(get_gl_texture_type(gxm_texture), cache.textures[0]);
-    configure_bound_texture(cache, gxm_texture);
-    renderer::texture::upload_bound_texture(cache, gxm_texture, mem);
-}
+using namespace texture;
 
-void configure_bound_texture(const renderer::TextureCacheState &state, const SceGxmTexture &gxm_texture) {
-    R_PROFILE(__func__);
-
-    const SceGxmTextureFormat fmt = gxm::get_format(&gxm_texture);
-    const SceGxmTextureBaseFormat base_format = gxm::get_base_format(fmt);
+static void apply_sampler_state(const SceGxmTexture &gxm_texture, const GLenum texture_bind_type, const int anisotropic_filtering) {
     const SceGxmTextureAddrMode uaddr = (SceGxmTextureAddrMode)(gxm_texture.uaddr_mode);
     const SceGxmTextureAddrMode vaddr = (SceGxmTextureAddrMode)(gxm_texture.vaddr_mode);
-    auto width = static_cast<uint32_t>(gxm::get_width(&gxm_texture));
-    auto height = static_cast<uint32_t>(gxm::get_height(&gxm_texture));
-    if (gxm::is_block_compressed_format(base_format)) {
-        // align width and height to block size
-        width = (width + 3) & ~3;
-        height = (height + 3) & ~3;
-    }
-    const GLint *const swizzle = translate_swizzle(fmt);
-    uint32_t mip_count = renderer::texture::get_upload_mip(gxm_texture.true_mip_count(), width, height, base_format);
-
-    const GLenum texture_bind_type = get_gl_texture_type(gxm_texture);
 
     const GLenum min_filter = translate_minmag_filter((SceGxmTextureFilter)gxm_texture.min_filter);
     const GLenum mag_filter = translate_minmag_filter((SceGxmTextureFilter)gxm_texture.mag_filter);
-
-    // TODO Support mip-mapping.
-    if (mip_count)
-        glTexParameteri(texture_bind_type, GL_TEXTURE_MAX_LEVEL, mip_count - 1);
 
     glTexParameteri(texture_bind_type, GL_TEXTURE_WRAP_S, translate_wrap_mode(uaddr));
     glTexParameteri(texture_bind_type, GL_TEXTURE_WRAP_T, translate_wrap_mode(vaddr));
@@ -77,20 +40,47 @@ void configure_bound_texture(const renderer::TextureCacheState &state, const Sce
     glTexParameteri(texture_bind_type, GL_TEXTURE_MIN_LOD, gxm_texture.lod_min0 | (gxm_texture.lod_min1 << 2));
     glTexParameteri(texture_bind_type, GL_TEXTURE_MIN_FILTER, min_filter);
     glTexParameteri(texture_bind_type, GL_TEXTURE_MAG_FILTER, mag_filter);
-    glTexParameteriv(texture_bind_type, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
 
     // anisotropic filtering
     // when using nearest filter, disable anisotropy as the pixels can contain data other than color
-    if (state.anisotropic_filtering > 1 && (min_filter != GL_NEAREST || mag_filter != GL_NEAREST))
+    if (anisotropic_filtering > 1 && (min_filter != GL_NEAREST || mag_filter != GL_NEAREST))
         // we don't need to check for the existence of this extension because it is considered an ubiquitous extension
         // for now we apply anisotropic filtering to all textures
-        glTexParameterf(texture_bind_type, GL_TEXTURE_MAX_ANISOTROPY_EXT, static_cast<float>(state.anisotropic_filtering));
+        glTexParameterf(texture_bind_type, GL_TEXTURE_MAX_ANISOTROPY_EXT, static_cast<float>(anisotropic_filtering));
+}
 
-    const GLenum internal_format = translate_internal_format(base_format);
-    const GLenum format = translate_format(base_format);
-    const GLenum type = translate_type(base_format);
+bool GLTextureCache::init(const bool hashless_texture_cache, const fs::path &texture_folder, const std::string_view game_id) {
+    TextureCache::init(hashless_texture_cache, texture_folder, game_id);
+    backend = Backend::OpenGL;
+
+    return textures.init(glGenTextures, glDeleteTextures);
+}
+
+void GLTextureCache::select(size_t index, const SceGxmTexture &texture) {
+    const GLuint gl_texture = textures[index];
+    glBindTexture(get_gl_texture_type(texture), gl_texture);
+}
+
+void GLTextureCache::configure_texture(const SceGxmTexture &gxm_texture) {
+    R_PROFILE(__func__);
+
+    const SceGxmTextureFormat fmt = gxm::get_format(gxm_texture);
+    const SceGxmTextureBaseFormat base_format = gxm::get_base_format(fmt);
+    uint32_t width = gxm::get_width(gxm_texture);
+    uint32_t height = gxm::get_height(gxm_texture);
+    const GLint *const swizzle = translate_swizzle(fmt);
+    uint32_t mip_count = renderer::texture::get_upload_mip(gxm_texture.true_mip_count(), width, height);
+
+    const GLenum texture_bind_type = get_gl_texture_type(gxm_texture);
+
+    // TODO Support mip-mapping.
+    if (mip_count)
+        glTexParameteri(texture_bind_type, GL_TEXTURE_MAX_LEVEL, mip_count - 1);
+    glTexParameteriv(texture_bind_type, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+
+    apply_sampler_state(gxm_texture, texture_bind_type, anisotropic_filtering);
+
     const auto texture_type = gxm_texture.texture_type();
-    const bool is_swizzled = (texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_CUBE) || (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (texture_type == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
     const auto base_fmt = gxm::get_base_format(fmt);
 
     std::uint32_t org_width = width;
@@ -98,7 +88,11 @@ void configure_bound_texture(const renderer::TextureCacheState &state, const Sce
 
     uint32_t mip_index = 0;
 
-    bool block_compressed = renderer::texture::is_compressed_format(base_fmt);
+    bool compressed = gxm::is_bcn_format(base_fmt);
+
+    const GLenum internal_format = translate_internal_format(base_format);
+    const GLenum format = translate_format(base_format);
+    const GLenum type = compressed ? 0 : translate_type(base_format);
 
     // GXM's cube map index is same as OpenGL: right, left, top, bottom, front, back
     GLenum upload_type = GL_TEXTURE_2D;
@@ -112,16 +106,11 @@ void configure_bound_texture(const renderer::TextureCacheState &state, const Sce
     }
 
     while (face_iterated < face_total_count && width && height) {
-        if (block_compressed) {
+        if (compressed) {
             size_t compressed_size = renderer::texture::get_compressed_size(base_fmt, width, height);
             glCompressedTexImage2D(upload_type, mip_index, internal_format, width, height, 0, static_cast<GLsizei>(compressed_size), nullptr);
-        } else if (!is_swizzled || (renderer::texture::can_texture_be_unswizzled_without_decode(base_fmt, false))) {
-            glTexImage2D(upload_type, mip_index, internal_format, width, height, 0, format, type, nullptr);
         } else {
-            if (is_swizzled) {
-                // Data feed will later be RGBA
-                glTexImage2D(upload_type, mip_index, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            }
+            glTexImage2D(upload_type, mip_index, internal_format, width, height, 0, format, type, nullptr);
         }
 
         mip_index++;
@@ -140,7 +129,7 @@ void configure_bound_texture(const renderer::TextureCacheState &state, const Sce
     }
 }
 
-void upload_bound_texture(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, bool is_compressed, size_t pixels_per_stride) {
+void GLTextureCache::upload_texture_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, uint32_t pixels_per_stride) {
     R_PROFILE(__func__);
 
     GLenum upload_type = GL_TEXTURE_2D;
@@ -148,12 +137,24 @@ void upload_bound_texture(SceGxmTextureBaseFormat base_format, uint32_t width, u
         // GXM's cube map index is same as OpenGL: right, left, top, bottom, front, back
         upload_type = GL_TEXTURE_CUBE_MAP_POSITIVE_X + (face - 1);
 
-    if (is_compressed) {
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (gxm::is_bcn_format(base_format)) {
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(pixels_per_stride));
+
+        const GLint block_size = (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_UBC1 || base_format == SCE_GXM_TEXTURE_BASE_FORMAT_UBC4 || base_format == SCE_GXM_TEXTURE_BASE_FORMAT_SBC4)
+            ? 8
+            : 16;
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_SIZE, block_size);
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_WIDTH, 4);
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_HEIGHT, 4);
 
         const GLenum format = translate_format(base_format);
         size_t compressed_size = renderer::texture::get_compressed_size(base_format, width, height);
         glCompressedTexSubImage2D(upload_type, mip_index, 0, 0, width, height, format, static_cast<GLsizei>(compressed_size), pixels);
+
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_SIZE, 0);
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_WIDTH, 0);
+        glPixelStorei(GL_UNPACK_COMPRESSED_BLOCK_HEIGHT, 0);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     } else {
         glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(pixels_per_stride));
 
@@ -165,73 +166,67 @@ void upload_bound_texture(SceGxmTextureBaseFormat base_format, uint32_t width, u
     }
 }
 
-// Dumps bound texture to a file
-void dump(const SceGxmTexture &gxm_texture, const MemState &mem, const std::string &parameter_name, const std::string &base_path, const std::string &title_id, Sha256Hash program_hash) {
-    static uint32_t g_tex_index = 0;
-    static std::vector<uint8_t> g_pixels; // re-use the same vector instead of allocating one every time
-    static std::map<TextureCacheHash, uint32_t> g_dumped_hashes;
+void GLTextureCache::import_configure_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, bool is_srgb, uint16_t nb_components, uint16_t mipcount, bool swap_rb) {
+    SceGxmTexture &gxm_texture = current_info->texture;
+    GLint default_swizzle[] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
+    const GLint *swizzle = default_swizzle;
+    if (nb_components == 3)
+        default_swizzle[3] = GL_ONE;
+    else if (nb_components <= 2)
+        swizzle = translate_swizzle(gxm::get_format(gxm_texture));
 
-    int tex_index = g_tex_index;
+    if (swap_rb)
+        std::swap(default_swizzle[0], default_swizzle[2]);
 
-    const TextureCacheHash hash = renderer::texture::hash_texture_data(gxm_texture, mem);
+    const GLenum texture_bind_type = GL_TEXTURE_2D;
 
-    if (g_dumped_hashes.find(hash) != g_dumped_hashes.end()) {
-        if (log_parameter && parameter_name != "") {
-            LOG_TRACE("Setting {} of {} by texture {}", parameter_name, hex_string(program_hash), g_dumped_hashes[hash]);
+    glTexParameteri(texture_bind_type, GL_TEXTURE_MAX_LEVEL, mipcount - 1);
+    glTexParameteriv(texture_bind_type, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+    apply_sampler_state(gxm_texture, texture_bind_type, anisotropic_filtering);
+
+    bool compressed = gxm::is_bcn_format(base_format);
+    const GLenum internal_format = translate_internal_format(base_format);
+    const GLenum format = translate_format(base_format);
+    const GLenum type = compressed ? 0 : translate_type(base_format);
+
+    // GXM's cube map index is same as OpenGL: right, left, top, bottom, front, back
+    GLenum upload_type = GL_TEXTURE_2D;
+
+    const bool is_cube = current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE || current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY;
+    if (is_cube)
+        upload_type = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
+
+    for (uint32_t face = 0; face < (is_cube ? 6U : 1U); face++) {
+        uint32_t mip_width = width;
+        uint32_t mip_height = height;
+        for (uint32_t mip = 0; mip < mipcount; mip++) {
+            if (compressed) {
+                size_t compressed_size = renderer::texture::get_compressed_size(base_format, mip_width, mip_height);
+                glCompressedTexImage2D(upload_type, mip, internal_format, mip_width, mip_height, 0, compressed_size, nullptr);
+            } else {
+                glTexImage2D(upload_type, mip, internal_format, mip_width, mip_height, 0, format, type, nullptr);
+            }
+            mip_width /= 2;
+            mip_height /= 2;
         }
-        return;
-    } else {
-        g_dumped_hashes.emplace(hash, tex_index);
-        ++g_tex_index;
+
+        upload_type++;
     }
+}
 
-    const size_t width = gxm::get_width(&gxm_texture);
-    const size_t height = gxm::get_height(&gxm_texture);
+namespace texture {
 
-    const SceGxmTextureFormat format = gxm::get_format(&gxm_texture);
-    const SceGxmTextureBaseFormat base_format = gxm::get_base_format(format);
+GLenum get_gl_texture_type(const SceGxmTexture &gxm_texture) {
+    const std::uint32_t type = gxm_texture.texture_type();
+    return ((type == SCE_GXM_TEXTURE_CUBE) || (type == SCE_GXM_TEXTURE_CUBE_ARBITRARY)) ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+}
 
-    const bool is_swizzled = (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
-    const bool need_decompress_and_unswizzle_on_cpu = is_swizzled && !renderer::texture::can_texture_be_unswizzled_without_decode(base_format, false);
-
-    size_t bpp = renderer::texture::bits_per_pixel(base_format);
-    size_t stride = (width + 7) & ~7; // NOTE: This is correct only with linear textures.
-    if (gxm::is_paletted_format(base_format)) {
-        stride = width;
-    }
-    size_t size = (bpp * stride * height) / 8;
-
-    if (gxm::is_yuv_format(base_format)) {
-        bpp = 24;
-        size = width * height * 3;
-    } else if (need_decompress_and_unswizzle_on_cpu || gxm::is_paletted_format(base_format)) {
-        bpp = 32;
-        size = width * height * 4;
-    }
-    const size_t components = bpp / 8;
-
-    g_pixels.resize(size);
-
-    auto gl_format = texture::translate_format(base_format);
-    auto gl_type = texture::translate_type(base_format);
-
-    if (need_decompress_and_unswizzle_on_cpu) {
-        gl_format = GL_RGBA;
-        gl_type = GL_UNSIGNED_BYTE;
-    }
-    glGetnTexImage(GL_TEXTURE_2D, 0, gl_format, gl_type, size, (void *)g_pixels.data());
-
-    // TODO: Create the texturelog path elsewhere on init once and pass it here whole
-    // TODO: Same for shaderlog path
-    const fs::path texturelog_path{ fs::path(base_path) / "texturelog" / title_id };
-    if (!fs::exists(texturelog_path))
-        fs::create_directories(texturelog_path);
-
-    const auto tex_filename = fmt::format("tex_{}_{:08X}_{}.png", tex_index, hash, hex_string(program_hash));
-    const auto filepath = texturelog_path / tex_filename;
-
-    if (!stbi_write_png(filepath.string().c_str(), static_cast<int>(width), static_cast<int>(height), static_cast<int>(components), (void *)g_pixels.data(), static_cast<int>(stride * components)))
-        LOG_WARN("Failed to save texture: {}", filepath.string());
+void bind_texture_without_cache(GLTextureCache &cache, const SceGxmTexture &gxm_texture, MemState &mem) {
+    R_PROFILE(__func__);
+    glBindTexture(get_gl_texture_type(gxm_texture), cache.textures[0]);
+    cache.select(0, gxm_texture);
+    cache.configure_texture(gxm_texture);
+    cache.upload_texture(gxm_texture, mem);
 }
 
 } // namespace texture

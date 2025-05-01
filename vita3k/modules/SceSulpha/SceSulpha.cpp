@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceSulpha.h"
+#include <module/module.h>
 
 EXPORT(int, sceSulphaAgentsGetNeededMemory) {
     return UNIMPLEMENTED();
@@ -108,27 +108,3 @@ EXPORT(int, sceSulphaShutdown) {
 EXPORT(int, sceSulphaUpdate) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceSulphaAgentsGetNeededMemory)
-BRIDGE_IMPL(sceSulphaAgentsRegister)
-BRIDGE_IMPL(sceSulphaAgentsUnregister)
-BRIDGE_IMPL(sceSulphaEventAdd)
-BRIDGE_IMPL(sceSulphaEventDelete)
-BRIDGE_IMPL(sceSulphaEventNew)
-BRIDGE_IMPL(sceSulphaEventReport)
-BRIDGE_IMPL(sceSulphaFileConnect)
-BRIDGE_IMPL(sceSulphaFileDisconnect)
-BRIDGE_IMPL(sceSulphaGetAgent)
-BRIDGE_IMPL(sceSulphaGetDefaultConfig)
-BRIDGE_IMPL(sceSulphaGetNeededMemory)
-BRIDGE_IMPL(sceSulphaGetTimestamp)
-BRIDGE_IMPL(sceSulphaInit)
-BRIDGE_IMPL(sceSulphaLogHandler)
-BRIDGE_IMPL(sceSulphaLogSetLevel)
-BRIDGE_IMPL(sceSulphaNetworkInit)
-BRIDGE_IMPL(sceSulphaNetworkShutdown)
-BRIDGE_IMPL(sceSulphaNodeDelete)
-BRIDGE_IMPL(sceSulphaNodeNew)
-BRIDGE_IMPL(sceSulphaSetBookmark)
-BRIDGE_IMPL(sceSulphaShutdown)
-BRIDGE_IMPL(sceSulphaUpdate)

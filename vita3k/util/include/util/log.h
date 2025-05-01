@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,17 +24,6 @@
 #include <util/fs.h>
 
 #include <type_traits>
-
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-#include <vector>
-
-namespace logging {
-
-ExitCode init(const Root &root_paths, bool use_stdout);
-void set_level(spdlog::level::level_enum log_level);
-ExitCode add_sink(const fs::path &log_path);
 
 #define LOG_TRACE SPDLOG_TRACE
 #define LOG_DEBUG SPDLOG_DEBUG
@@ -62,12 +51,34 @@ ExitCode add_sink(const fs::path &log_path);
     if (flag)                      \
     LOG_CRITICAL(__VA_ARGS__)
 
-int ret_error_impl(const char *name, const char *error_str, std::uint32_t error_val);
+#define LOG_ONCE(log_function, ...)    \
+    do {                               \
+        static bool LOG_DONE = false;  \
+        if (!LOG_DONE)                 \
+            log_function(__VA_ARGS__); \
+        LOG_DONE = true;               \
+    } while (0)
+
+#define LOG_TRACE_ONCE(...) LOG_ONCE(LOG_TRACE, __VA_ARGS__)
+#define LOG_DEBUG_ONCE(...) LOG_ONCE(LOG_DEBUG, __VA_ARGS__)
+#define LOG_INFO_ONCE(...) LOG_ONCE(LOG_INFO, __VA_ARGS__)
+#define LOG_WARN_ONCE(...) LOG_ONCE(LOG_WARN, __VA_ARGS__)
+#define LOG_ERROR_ONCE(...) LOG_ONCE(LOG_ERROR, __VA_ARGS__)
+#define LOG_CRITICAL_ONCE(...) LOG_ONCE(LOG_CRITICAL, __VA_ARGS__)
+
+namespace logging {
+
+ExitCode init(const Root &root_paths, bool use_stdout);
+void set_level(spdlog::level::level_enum log_level);
+ExitCode add_sink(const fs::path &log_path);
+
 } // namespace logging
 
-#define RET_ERROR(error) logging::ret_error_impl(export_name, #error, error)
-
-// Using stringstream as its 2x faster than fmt::format
+#define RET_ERROR(error)                                                            \
+    ([&]() {                                                                        \
+        LOG_ERROR_ONCE("{} returned {} ({})", export_name, #error, log_hex(error)); \
+        return static_cast<int>(error);                                             \
+    })()
 
 /*
     returns: A string with the input number formatted in hexadecimal
@@ -78,11 +89,7 @@ int ret_error_impl(const char *name, const char *error_str, std::uint32_t error_
 */
 template <typename T>
 std::string log_hex(T val) {
-    using unsigned_type = typename std::make_unsigned<T>::type;
-    std::stringstream ss;
-    ss << "0x";
-    ss << std::hex << static_cast<unsigned_type>(val);
-    return ss.str();
+    return fmt::format("0x{:X}", static_cast<std::make_unsigned_t<T>>(val));
 }
 
 /*
@@ -96,7 +103,6 @@ std::string log_hex(T val) {
         * `uint16_t 1337` returns: `"0x0539"`
         * `uint16_t 65535` returns: `"0xFFFF"`
 
-
         * `uint32_t 15` returns: `"0x0000000F"`
         * `uint32_t 1337` returns: `"0x00000539"`
         * `uint32_t 65535` returns: `"0x0000FFFF"`
@@ -104,8 +110,19 @@ std::string log_hex(T val) {
 */
 template <typename T>
 std::string log_hex_full(T val) {
-    std::stringstream ss;
-    ss << "0x";
-    ss << std::setfill('0') << std::setw(sizeof(T) * 2) << std::hex << val;
-    return ss.str();
+    return fmt::format("0x{:0{}X}", static_cast<std::make_unsigned_t<T>>(val), sizeof(T) * 2);
 }
+
+template <class T>
+class Ptr;
+FMT_BEGIN_NAMESPACE
+template <typename T, typename Char>
+struct formatter<Ptr<T>, Char> : formatter<string_view, Char> {
+public:
+    template <typename FormatContext>
+    auto format(const Ptr<T> p, FormatContext &ctx) const {
+        return detail::write(ctx.out(),
+            basic_string_view<Char>(log_hex_full(p.address())));
+    }
+};
+FMT_END_NAMESPACE

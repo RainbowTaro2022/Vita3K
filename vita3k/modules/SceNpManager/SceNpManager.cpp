@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,19 +15,36 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceNpManager.h"
+#include <module/module.h>
+
 #include "util/types.h"
 
 #include <io/state.h>
 #include <kernel/state.h>
 #include <np/state.h>
-#include <util/lock_and_find.h>
 #include <util/log.h>
 
 #include <np/functions.h>
 
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceNpManager);
+
+enum SceNpErrorCode : uint32_t {
+    SCE_NP_ERROR_ALREADY_INITIALIZED = 0x80550001,
+    SCE_NP_ERROR_NOT_INITIALIZED = 0x80550002,
+    SCE_NP_ERROR_INVALID_ARGUMENT = 0x80550003,
+    SCE_NP_ERROR_UNKNOWN_PLATFORM_TYPE = 0x80550004
+};
+
+enum SceNpManagerErrorCode : uint32_t {
+    SCE_NP_MANAGER_ERROR_ABORTED = 0x80550507,
+    SCE_NP_MANAGER_ERROR_ALREADY_INITIALIZED = 0x80550501,
+    SCE_NP_MANAGER_ERROR_OUT_OF_MEMORY = 0x80550504,
+    SCE_NP_MANAGER_ERROR_NOT_INITIALIZED = 0x80550502,
+    SCE_NP_MANAGER_ERROR_INVALID_ARGUMENT = 0x80550503,
+    SCE_NP_MANAGER_ERROR_INVALID_STATE = 0x80550506,
+    SCE_NP_MANAGER_ERROR_ID_NOT_AVAIL = 0x80550509
+};
 
 EXPORT(int, sceNpAuthAbortOAuthRequest) {
     TRACY_FUNC(sceNpAuthAbortOAuthRequest);
@@ -51,14 +68,11 @@ EXPORT(int, sceNpAuthGetAuthorizationCode) {
 
 EXPORT(int, sceNpCheckCallback) {
     TRACY_FUNC(sceNpCheckCallback);
-    if (emuenv.np.state == 0)
-        return 0;
 
-    emuenv.np.state = emuenv.cfg.current_config.psn_status;
-
-    const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
-    for (auto &callback : emuenv.np.cbs) {
-        thread->run_callback(callback.second.pc, { (uint32_t)emuenv.np.state, 0, callback.second.data });
+    const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+    const SceNpServiceState state = emuenv.cfg.current_config.psn_signed_in ? SCE_NP_SERVICE_STATE_SIGNED_IN : SCE_NP_SERVICE_STATE_SIGNED_OUT;
+    for (auto &[_, np_callback] : emuenv.np.cbs) {
+        thread->run_callback(np_callback.pc, { static_cast<uint32_t>(state), 0, np_callback.data });
     }
 
     return STUBBED("Stub");
@@ -66,7 +80,7 @@ EXPORT(int, sceNpCheckCallback) {
 
 EXPORT(int, sceNpGetServiceState, SceNpServiceState *state) {
     TRACY_FUNC(sceNpGetServiceState, state);
-    *state = static_cast<SceNpServiceState>(emuenv.cfg.current_config.psn_status);
+    *state = emuenv.cfg.current_config.psn_signed_in ? SCE_NP_SERVICE_STATE_SIGNED_IN : SCE_NP_SERVICE_STATE_SIGNED_OUT;
 
     return STUBBED("Stub");
 }
@@ -115,24 +129,25 @@ EXPORT(int, sceNpManagerGetNpId, np::SceNpId *id) {
         LOG_ERROR("Your online ID has over 16 characters, try again with shorter name");
         return SCE_NP_MANAGER_ERROR_ID_NOT_AVAIL;
     }
-    strcpy(id->handle.data, emuenv.io.user_name.c_str());
-    id->handle.term = '\0';
-    std::fill(id->handle.dummy, id->handle.dummy + 3, 0);
-
     // Fill the unused stuffs to 0 (prevent some weird things happen)
-    std::fill(id->opt, id->opt + 8, 0);
-    std::fill(id->reserved, id->reserved + 8, 0);
-
+    memset(id, 0, sizeof(np::SceNpId));
+    strcpy(id->handle.data, emuenv.io.user_name.c_str());
+    id->isIdValid = true;
+    id->opt.platformType[0] = 'p';
+    id->opt.platformType[1] = 's';
+    id->opt.platformType[2] = 'p';
+    id->opt.platformType[3] = '2';
     return 0;
 }
 
 EXPORT(int, sceNpRegisterServiceStateCallback, Ptr<void> callback, Ptr<void> data) {
     TRACY_FUNC(sceNpRegisterServiceStateCallback, callback, data);
     const std::lock_guard<std::mutex> lock(emuenv.kernel.mutex);
-    uint32_t cid = emuenv.kernel.get_next_uid();
-    SceNpServiceStateCallback sceNpServiceStateCallback;
-    sceNpServiceStateCallback.pc = callback.address();
-    sceNpServiceStateCallback.data = data.address();
+    SceUID cid = emuenv.kernel.get_next_uid();
+    SceNpServiceStateCallback sceNpServiceStateCallback{
+        .pc = callback.address(),
+        .data = data.address()
+    };
     emuenv.np.cbs.emplace(cid, sceNpServiceStateCallback);
     emuenv.np.state_cb_id = cid;
     return 0;
@@ -154,19 +169,3 @@ EXPORT(int, sceNpUnregisterServiceStateCallback) {
     }
     return 0;
 }
-
-BRIDGE_IMPL(sceNpAuthAbortOAuthRequest)
-BRIDGE_IMPL(sceNpAuthCreateOAuthRequest)
-BRIDGE_IMPL(sceNpAuthDeleteOAuthRequest)
-BRIDGE_IMPL(sceNpAuthGetAuthorizationCode)
-BRIDGE_IMPL(sceNpCheckCallback)
-BRIDGE_IMPL(sceNpGetServiceState)
-BRIDGE_IMPL(sceNpInit)
-BRIDGE_IMPL(sceNpManagerGetAccountRegion)
-BRIDGE_IMPL(sceNpManagerGetCachedParam)
-BRIDGE_IMPL(sceNpManagerGetChatRestrictionFlag)
-BRIDGE_IMPL(sceNpManagerGetContentRatingFlag)
-BRIDGE_IMPL(sceNpManagerGetNpId)
-BRIDGE_IMPL(sceNpRegisterServiceStateCallback)
-BRIDGE_IMPL(sceNpTerm)
-BRIDGE_IMPL(sceNpUnregisterServiceStateCallback)

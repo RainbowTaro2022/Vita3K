@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,8 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDisplayUser.h"
+#include "../SceDisplay/SceDisplay.h"
+#include <module/module.h>
 
 #include <util/tracy.h>
 
@@ -37,9 +38,9 @@ EXPORT(int, sceDisplayGetFrameBufInternal) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceDisplayGetMaximumFrameBufResolution) {
-    TRACY_FUNC(sceDisplayGetMaximumFrameBufResolution);
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceDisplayGetMaximumFrameBufResolution, SceInt32 *width, SceInt32 *height) {
+    TRACY_FUNC(sceDisplayGetMaximumFrameBufResolution, width, height);
+    return CALL_EXPORT(_sceDisplayGetMaximumFrameBufResolution, width, height);
 }
 
 EXPORT(int, sceDisplayGetResolutionInfoInternal) {
@@ -60,15 +61,11 @@ EXPORT(int, sceDisplaySetFrameBufForCompat) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceDisplaySetFrameBufInternal) {
-    TRACY_FUNC(sceDisplaySetFrameBufInternal);
-    return UNIMPLEMENTED();
-}
+EXPORT(int, sceDisplaySetFrameBufInternal, uint32_t maybe_buffer_idx, uint32_t unkn, SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync) {
+    TRACY_FUNC(sceDisplaySetFrameBufInternal, maybe_buffer_idx, unkn, pFrameBuf, sync);
+    // only render for frame buffer 0 or we'll get double fps
+    if (maybe_buffer_idx != 0)
+        return 0;
 
-BRIDGE_IMPL(sceDisplayGetFrameBuf)
-BRIDGE_IMPL(sceDisplayGetFrameBufInternal)
-BRIDGE_IMPL(sceDisplayGetMaximumFrameBufResolution)
-BRIDGE_IMPL(sceDisplayGetResolutionInfoInternal)
-BRIDGE_IMPL(sceDisplaySetFrameBuf)
-BRIDGE_IMPL(sceDisplaySetFrameBufForCompat)
-BRIDGE_IMPL(sceDisplaySetFrameBufInternal)
+    return CALL_EXPORT(_sceDisplaySetFrameBuf, pFrameBuf, sync, nullptr);
+}

@@ -7,9 +7,6 @@
 [submodule "external/capstone"]
 	path = external/capstone
 	url = https://github.com/aquynh/capstone.git
-[submodule "external/crypto-algorithms"]
-	path = external/crypto-algorithms
-	url = https://github.com/KorewaWatchful/crypto-algorithms
 [submodule "external/dirent"]
 	path = external/dirent
 	url = https://github.com/tronkko/dirent
@@ -65,10 +62,7 @@
 	url = https://github.com/vitasdk/vita-toolchain.git
 [submodule "external/VulkanMemoryAllocator-Hpp"]
 	path = external/VulkanMemoryAllocator-Hpp
-	url = https://github.com/Macdu/VulkanMemoryAllocator-Hpp
-[submodule "external/Vulkan-Headers"]
-	path = external/Vulkan-Headers
-	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+	url = https://github.com/YaaZ/VulkanMemoryAllocator-Hpp
 [submodule "external/yaml-cpp"]
 	path = external/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp
@@ -96,3 +90,6 @@
 [submodule "external/cubeb"]
 	path = external/cubeb
 	url = https://github.com/mozilla/cubeb.git
+[submodule "external/concurrentqueue"]
+	path = external/concurrentqueue
+	url = https://github.com/cameron314/concurrentqueue.git

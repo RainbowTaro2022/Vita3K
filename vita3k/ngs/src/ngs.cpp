@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,13 +15,14 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+#include <cpu/functions.h>
 #include <kernel/state.h>
 
 #include <ngs/state.h>
 #include <ngs/system.h>
 #include <util/lock_and_find.h>
 
-#include <util/log.h>
+#include <util/vector_utils.h>
 
 namespace ngs {
 Rack::Rack(System *mama, const Ptr<void> memspace, const uint32_t memspace_size)
@@ -69,13 +70,27 @@ int32_t VoiceInputManager::receive(ngs::Patch *patch, const VoiceProduct &produc
     float *dest_buffer = reinterpret_cast<float *>(input->data());
     const float *data_to_mix_in = reinterpret_cast<const float *>(product.data);
 
+    float volume_matrix[2][2];
+    memcpy(volume_matrix, patch->volume_matrix, sizeof(volume_matrix));
+
+    // we always use stereo internally, so make sure not to add too many channels
+    if (patch->source->rack->channels_per_voice == 1) {
+        volume_matrix[1][0] = 0.0f;
+        volume_matrix[1][1] = 0.0f;
+    }
+
+    if (patch->dest->rack->channels_per_voice == 1) {
+        volume_matrix[0][1] = 0.0f;
+        volume_matrix[1][1] = 0.0f;
+    }
+
     // Try mixing, also with the use of this volume matrix
     // Dest is our voice to receive this data.
     for (int32_t k = 0; k < patch->dest->rack->system->granularity; k++) {
-        dest_buffer[k * 2] = std::clamp(dest_buffer[k * 2] + data_to_mix_in[k * 2] * patch->volume_matrix[0][0]
-                + data_to_mix_in[k * 2 + 1] * patch->volume_matrix[1][0],
+        dest_buffer[k * 2] = std::clamp(dest_buffer[k * 2] + data_to_mix_in[k * 2] * volume_matrix[0][0]
+                + data_to_mix_in[k * 2 + 1] * volume_matrix[1][0],
             -1.0f, 1.0f);
-        dest_buffer[k * 2 + 1] = std::clamp(dest_buffer[k * 2 + 1] + data_to_mix_in[k * 2] * patch->volume_matrix[0][1] + data_to_mix_in[k * 2 + 1] * patch->volume_matrix[1][1], -1.0f, 1.0f);
+        dest_buffer[k * 2 + 1] = std::clamp(dest_buffer[k * 2 + 1] + data_to_mix_in[k * 2] * volume_matrix[0][1] + data_to_mix_in[k * 2 + 1] * volume_matrix[1][1], -1.0f, 1.0f);
     }
 
     return 0;
@@ -191,38 +206,28 @@ Ptr<Patch> Voice::patch(const MemState &mem, const int32_t index, int32_t subind
     patch->source = this;
 
     // Initialize the matrix
-    patch->volume_matrix[0][1] = 0.0f;
-    patch->volume_matrix[0][0] = 1.0f;
-    patch->volume_matrix[1][0] = 0.0f;
-    patch->volume_matrix[1][1] = 1.0f;
+    memset(patch->volume_matrix, 0, sizeof(patch->volume_matrix));
 
     return patches[index][subindex];
 }
 
 bool Voice::remove_patch(const MemState &mem, const Ptr<Patch> patch) {
+    if (!patch) {
+        return false;
+    }
     const std::lock_guard<std::mutex> guard(*voice_mutex);
     bool found = false;
-
-    for (size_t i = 0; i < patches.size(); i++) {
-        auto iterator = std::find(patches[i].begin(), patches[i].end(), patch);
-
-        if (iterator != patches[i].end()) {
+    for (auto &patches_1 : patches) {
+        if (vector_utils::contains(patches_1, patch)) {
             found = true;
             break;
         }
     }
-
     if (!found)
         return false;
 
     // Try to unroute. Free the destination index
-    Patch *patch_info = patch.get(mem);
-
-    if (!patch_info) {
-        return false;
-    }
-
-    patch_info->output_sub_index = -1;
+    patch.get(mem)->output_sub_index = -1;
 
     return true;
 }
@@ -235,12 +240,12 @@ ModuleData *Voice::module_storage(const uint32_t index) {
     return &datas[index];
 }
 
-void Voice::transition(const VoiceState new_state) {
+void Voice::transition(const MemState &mem, const VoiceState new_state) {
     const VoiceState old = state;
     state = new_state;
 
     for (size_t i = 0; i < datas.size(); i++) {
-        rack->modules[i]->on_state_change(datas[i], old);
+        rack->modules[i]->on_state_change(mem, datas[i], old);
     }
 }
 
@@ -264,7 +269,7 @@ bool Voice::parse_params(const MemState &mem, const SceNgsModuleParamHeader *hea
 
 SceInt32 Voice::parse_params_block(const MemState &mem, const SceNgsModuleParamHeader *header, const SceUInt32 size) {
     const SceUInt8 *data = reinterpret_cast<const SceUInt8 *>(header);
-    const SceUInt8 *data_end = reinterpret_cast<const SceUInt8 *>(data + size);
+    const SceUInt8 *data_end = data + size;
 
     SceInt32 num_error = 0;
 
@@ -316,7 +321,7 @@ void Voice::invoke_callback(KernelState &kernel, const MemState &mem, const SceU
         return;
     }
 
-    const ThreadStatePtr thread = lock_and_find(thread_id, kernel.threads, kernel.mutex);
+    const ThreadStatePtr thread = kernel.get_thread(thread_id);
     const Address callback_info_addr = stack_alloc(*thread->cpu, sizeof(SceNgsCallbackInfo));
 
     SceNgsCallbackInfo *info = Ptr<SceNgsCallbackInfo>(callback_info_addr).get(mem);
@@ -339,7 +344,8 @@ uint32_t System::get_required_memspace_size(SceNgsSystemInitParams *parameters) 
 uint32_t Rack::get_required_memspace_size(MemState &mem, SceNgsRackDescription *description) {
     uint32_t buffer_size = 0;
     if (description->definition)
-        buffer_size = get_voice_definition_size(description->definition.get(mem));
+        // multiply by 2 because there are 2 copies of each buffer
+        buffer_size = 2 * get_voice_definition_size(description->definition.get(mem));
 
     return sizeof(ngs::Rack) + description->voice_count * (sizeof(ngs::Voice) + buffer_size + description->patches_per_output * description->definition.get(mem)->output_count * sizeof(ngs::Patch));
 }
@@ -377,9 +383,7 @@ void release_system(State &ngs, const MemState &mem, System *system) {
     for (size_t i = 0; i < system->racks.size(); i++)
         release_rack(ngs, mem, system, system->racks[i]);
 
-    const auto it = std::find(ngs.systems.begin(), ngs.systems.end(), system);
-    if (it != ngs.systems.end())
-        ngs.systems.erase(it);
+    vector_utils::erase_first(ngs.systems, system);
 
     system->~System();
 }
@@ -420,8 +424,11 @@ bool init_rack(State &ngs, const MemState &mem, System *system, SceNgsBufferInfo
 
         // Allocate parameter buffer info for each voice
         for (size_t i = 0; i < rack->modules.size(); i++) {
-            v->datas[i].info.size = static_cast<uint32_t>(rack->modules[i]->get_buffer_parameter_size());
+            v->datas[i].info.size = rack->modules[i]->get_buffer_parameter_size();
             v->datas[i].info.data = rack->alloc_raw(v->datas[i].info.size);
+            // from the behavior of games, it looks like the other info buffer (there are two copies because of VoiceLock) is located right after the first
+            // one, so copy this behavior, to avoid a game overwriting some important ngs struct
+            rack->alloc_raw(v->datas[i].info.size);
 
             v->datas[i].parent = v;
             v->datas[i].index = static_cast<uint32_t>(i);
@@ -446,9 +453,7 @@ void release_rack(State &ngs, const MemState &mem, System *system, Rack *rack) {
     }
 
     // remove from system
-    const auto it = std::find(system->racks.begin(), system->racks.end(), rack);
-    if (it != system->racks.end())
-        system->racks.erase(it);
+    vector_utils::erase_first(system->racks, rack);
 
     // free pointer memory
     rack->~Rack();

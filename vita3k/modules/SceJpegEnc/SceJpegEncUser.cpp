@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceJpegEncUser.h"
+#include <module/module.h>
 
 #include <codec/state.h>
 #include <codec/types.h>
@@ -35,7 +35,7 @@ struct SceJpegEncoderContext {
     int32_t headerMode;
 };
 
-int sceJpegEncoderInitImpl(SceJpegEncoderContext *context, int32_t inWidth, int32_t inHeight, int32_t pixelFormat, Ptr<uint8_t> outBuffer, uint32_t outSize, SceJpegEncoderInitParamOption option = SCE_JPEGENC_INIT_PARAM_OPTION_NONE) {
+static int sceJpegEncoderInitImpl(SceJpegEncoderContext *context, int32_t inWidth, int32_t inHeight, int32_t pixelFormat, Ptr<uint8_t> outBuffer, uint32_t outSize, SceJpegEncoderInitParamOption option = SCE_JPEGENC_INIT_PARAM_OPTION_NONE) {
     context->inWidth = inWidth;
     context->inHeight = inHeight;
     context->pixelFormat = pixelFormat;
@@ -158,14 +158,3 @@ EXPORT(int, sceJpegEncoderSetValidRegion, SceJpegEncoderContext *context, int32_
     TRACY_FUNC(sceJpegEncoderSetValidRegion, context, inWidth, inHeight);
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceJpegEncoderCsc)
-BRIDGE_IMPL(sceJpegEncoderEncode)
-BRIDGE_IMPL(sceJpegEncoderEnd)
-BRIDGE_IMPL(sceJpegEncoderGetContextSize)
-BRIDGE_IMPL(sceJpegEncoderInit)
-BRIDGE_IMPL(sceJpegEncoderInitWithParam)
-BRIDGE_IMPL(sceJpegEncoderSetCompressionRatio)
-BRIDGE_IMPL(sceJpegEncoderSetHeaderMode)
-BRIDGE_IMPL(sceJpegEncoderSetOutputAddr)
-BRIDGE_IMPL(sceJpegEncoderSetValidRegion)

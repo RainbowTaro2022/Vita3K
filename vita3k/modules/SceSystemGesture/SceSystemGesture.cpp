@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceSystemGesture.h"
+#include <module/module.h>
 
 EXPORT(int, sceSystemGestureCreateTouchRecognizer) {
     return UNIMPLEMENTED();
@@ -84,21 +84,3 @@ EXPORT(int, sceSystemGestureUpdateTouchRecognizer) {
 EXPORT(int, sceSystemGestureUpdateTouchRecognizerRectangle) {
     return UNIMPLEMENTED();
 }
-
-BRIDGE_IMPL(sceSystemGestureCreateTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureFinalizePrimitiveTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureGetPrimitiveTouchEventByIndex)
-BRIDGE_IMPL(sceSystemGestureGetPrimitiveTouchEventByPrimitiveID)
-BRIDGE_IMPL(sceSystemGestureGetPrimitiveTouchEvents)
-BRIDGE_IMPL(sceSystemGestureGetPrimitiveTouchEventsCount)
-BRIDGE_IMPL(sceSystemGestureGetTouchEventByEventID)
-BRIDGE_IMPL(sceSystemGestureGetTouchEventByIndex)
-BRIDGE_IMPL(sceSystemGestureGetTouchEvents)
-BRIDGE_IMPL(sceSystemGestureGetTouchEventsCount)
-BRIDGE_IMPL(sceSystemGestureGetTouchRecognizerInformation)
-BRIDGE_IMPL(sceSystemGestureInitializePrimitiveTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureResetPrimitiveTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureResetTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureUpdatePrimitiveTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureUpdateTouchRecognizer)
-BRIDGE_IMPL(sceSystemGestureUpdateTouchRecognizerRectangle)

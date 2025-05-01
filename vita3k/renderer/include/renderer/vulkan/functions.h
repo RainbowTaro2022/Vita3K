@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ struct MemState;
 
 namespace renderer::vulkan {
 
-bool create(SDL_Window *window, std::unique_ptr<renderer::State> &state, const char *base_path, const Config &config);
+bool create(SDL_Window *window, std::unique_ptr<renderer::State> &state, const Config &config);
 
 bool create(VKState &state, std::unique_ptr<Context> &context, MemState &mem);
 bool create(VKState &state, std::unique_ptr<RenderTarget> &rt, const SceGxmRenderTargetParams &params, const FeatureState &features);
@@ -35,20 +35,20 @@ bool create(std::unique_ptr<FragmentProgram> &fp, VKState &state, const SceGxmPr
 void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format,
     Ptr<void> indices, size_t count, uint32_t instance_count, MemState &mem, const Config &config);
 
+void mid_scene_flush(VKContext &context, const SceGxmNotification notification);
 void new_frame(VKContext &context);
+void signal_sync_object(VKState &state, SceGxmSyncObject *sync_object, uint32_t timestamp);
 
 void set_context(VKContext &context, MemState &mem, VKRenderTarget *rt, const FeatureState &features);
 void set_uniform_buffer(VKContext &context, const MemState &mem, const ShaderProgram *program, const bool vertex_shader, const int block_num, const int size, Ptr<uint8_t> data);
 
 void sync_clipping(VKContext &context);
 void sync_stencil_func(VKContext &context, const bool is_back);
-void sync_mask(VKContext &context, const MemState &mem);
 void sync_depth_bias(VKContext &context);
 void sync_depth_data(VKContext &context);
 void sync_stencil_data(VKContext &context, const MemState &mem);
 void sync_point_line_width(VKContext &context, const bool is_front);
-void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config,
-    const std::string &base_path, const std::string &title_id);
+void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config);
 void sync_viewport_flat(VKContext &context);
 void sync_viewport_real(VKContext &context, const float xOffset, const float yOffset, const float zOffset,
     const float xScale, const float yScale, const float zScale);
@@ -56,17 +56,5 @@ void sync_visibility_buffer(VKContext &context, Ptr<uint32_t> buffer, uint32_t s
 void sync_visibility_index(VKContext &context, bool enable, uint32_t index, bool is_increment);
 
 void refresh_pipeline(VKContext &context);
-
-namespace texture {
-
-bool init(VKTextureCacheState &cache, const bool hashless_texture_cache);
-
-void configure_bound_texture(VKTextureCacheState &cache, const SceGxmTexture &gxm_texture);
-vk::Sampler create_sampler(VKState &state, const SceGxmTexture &gxm_texture, const uint16_t mip_count = 1);
-void upload_bound_texture(VKTextureCacheState &cache, SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height,
-    uint32_t mip_index, const void *pixels, int face, bool is_compressed, size_t pixels_per_stride);
-void upload_done(VKTextureCacheState &cache);
-
-} // namespace texture
 
 } // namespace renderer::vulkan

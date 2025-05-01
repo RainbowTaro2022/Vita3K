@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2023 Vita3K team
+// Copyright (C) 2025 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,10 +18,6 @@
 #pragma once
 
 #include <module/module.h>
+#include <util/tracy.h>
 
-BRIDGE_DECL(_sceErrorGetExternalString)
-BRIDGE_DECL(_sceErrorHistoryClearError)
-BRIDGE_DECL(_sceErrorHistoryGetError)
-BRIDGE_DECL(_sceErrorHistoryPostError)
-BRIDGE_DECL(_sceErrorHistorySetDefaultFormat)
-BRIDGE_DECL(_sceErrorHistoryUpdateSequenceInfo)
+DECL_EXPORT(SceInt32, _sceErrorGetExternalString, char *result, uint32_t err);
